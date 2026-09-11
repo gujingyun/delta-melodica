@@ -75,7 +75,7 @@ class App:
         self.log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         self.log.addHandler(self.log_handler)
         self.elevated = process_elevated()
-        self.log.info("启动 三角洲口风琴 v0.8；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
+        self.log.info("启动 三角洲口风琴 v0.9；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
         self.settings = DEFAULTS.copy()
         self.load_error = None
         try:
@@ -159,7 +159,7 @@ class App:
 
     def _build(self):
         root = self.root
-        root.title("三角洲口风琴 v0.8 · MIDI 自动演奏")
+        root.title("三角洲口风琴 v0.9 · MIDI 自动演奏")
         root.geometry("1120x850")
         root.minsize(1000, 830)
         root.configure(bg=BG)
@@ -193,7 +193,7 @@ class App:
             self.admin_button = ttk.Button(header, text="以管理员身份重启", command=self.elevate)
             self.admin_button.pack(side="right", padx=(0, 12))
             self.locked_widgets.append(self.admin_button)
-        tk.Label(header, text="v0.8 · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
+        tk.Label(header, text="v0.9 · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
 
         body = tk.Frame(root, bg=BG)
         body.pack(fill="both", expand=True, padx=28)
@@ -261,7 +261,6 @@ class App:
         tk.Label(segments, text="演出片段", bg=CARD, fg=MUTED).pack(side="left", padx=(0, 12))
         self.segment_button = ttk.Button(segments, text="设置片段…", command=self.segments_dialog, padding=(10, 5))
         self.segment_button.pack(side="right")
-        self.locked_widgets.append(self.segment_button)
         tk.Label(segments, textvariable=self.segment_summary, bg=CARD, fg=ACCENT,
                  font=("Microsoft YaHei UI", 9), anchor="w").pack(side="left", fill="x", expand=True)
 
@@ -515,26 +514,56 @@ class App:
         return segment_source_position(self.player.position*float(self.speed.get()), self.segments, self.song.duration)
 
     def segments_dialog(self):
-        if self.busy or not self.song:
+        if not self.song:
             return
-        dialog = self._dialog("设置演出片段", "720x620")
-        dialog.minsize(680, 600)
-        draft = list(self.segments)
         position = self.original_position()
+        game_playing = self.busy and self.player.active and not self.player.cancel.is_set() and self.playing_mode == "游戏演奏"
+        if game_playing:
+            # 游戏演奏时打开编辑面板会改变前台窗口，先释放游戏按键并冻结当前位置。
+            self.pause("设置片段")
+        dialog = self._dialog("设置演出片段", "760x760")
+        dialog.minsize(700, 720)
+        draft = list(self.segments)
         tk.Label(dialog, text="按顺序演奏你选的片段", bg=CARD, fg=TEXT,
                  font=("Microsoft YaHei UI", 16, "bold")).pack(anchor="w", padx=22, pady=(18, 6))
-        tk.Label(dialog, text=f"原曲时长 {precise_clock_label(self.song.duration)}　·　当前原曲位置 {precise_clock_label(position)}\n"
-                 "填写起止时间 → 添加到列表 → 保存片段。时间按原曲 1 倍速计算。",
-                 bg=CARD, fg=MUTED, justify="left").pack(anchor="w", padx=22, pady=(0, 12))
+        position_value = tk.StringVar(value=precise_clock_label(position))
+        tk.Label(dialog, text=f"原曲时长 {precise_clock_label(self.song.duration)}　·　当前原曲位置：",
+                 bg=CARD, fg=MUTED).pack(anchor="w", padx=22, pady=(0, 2))
+        tk.Label(dialog, textvariable=position_value, bg=CARD, fg=ACCENT,
+                 font=("Consolas", 13, "bold")).pack(anchor="w", padx=22, pady=(0, 8))
+        tk.Label(dialog, text="播放时记录起点和终点；暂停后可以拖动下方进度条精确定位。时间按原曲 1 倍速计算。",
+                 bg=CARD, fg=MUTED, justify="left").pack(anchor="w", padx=22, pady=(0, 8))
+
+        transport = tk.Frame(dialog, bg=CARD)
+        transport.pack(fill="x", padx=22, pady=(0, 8))
+        dialog_progress = ttk.Scale(transport, from_=0, to=100, value=0, cursor="hand2")
+        dialog_progress.pack(fill="x", pady=(0, 8))
         start_value = tk.StringVar(value=precise_clock_label(position))
         end_value = tk.StringVar(value=precise_clock_label(min(self.song.duration, position+10)))
+        transport_buttons = tk.Frame(transport, bg=CARD)
+        transport_buttons.pack(fill="x")
+        dialog_play_text = tk.StringVar(value="Ⅱ 暂停播放" if self.busy and not self.player.cancel.is_set() else "▷ 继续播放")
+        dialog_play = ttk.Button(transport_buttons, textvariable=dialog_play_text, padding=(12, 6))
+        dialog_play.pack(side="left")
+        record_start_button = ttk.Button(transport_buttons, text="记录当前为起点", command=lambda: record_current(start_value), padding=(12, 6))
+        record_start_button.pack(side="left", padx=(8, 0))
+        record_end_button = ttk.Button(transport_buttons, text="记录当前为终点", command=lambda: record_current(end_value), padding=(12, 6))
+        record_end_button.pack(side="left", padx=(8, 0))
+        dialog.segment_progress = dialog_progress
+        dialog.segment_play = dialog_play
+        dialog.segment_position = position_value
+        dialog.segment_start_value = start_value
+        dialog.segment_end_value = end_value
+        dialog.segment_start_button = record_start_button
+        dialog.segment_end_button = record_end_button
+
         fields = tk.Frame(dialog, bg=CARD)
         fields.pack(fill="x", padx=22)
         for row, (label, variable) in enumerate((("起点", start_value), ("终点", end_value))):
             tk.Label(fields, text=label, bg=CARD, fg=MUTED).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=4)
             ttk.Entry(fields, textvariable=variable, width=18).grid(row=row, column=1, sticky="ew", pady=4)
             ttk.Button(fields, text="使用当前位置", padding=(10, 5),
-                       command=lambda variable=variable: variable.set(precise_clock_label(position))).grid(row=row, column=2, padx=(12, 0))
+                       command=lambda variable=variable: record_current(variable)).grid(row=row, column=2, padx=(12, 0))
         fields.columnconfigure(1, weight=1)
         tk.Label(dialog, text="支持 01:23.500 或 83.5 秒；片段可重复，也可调整顺序。",
                  bg=CARD, fg=MUTED, font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=22, pady=(5, 8))
@@ -559,6 +588,72 @@ class App:
         summary = tk.StringVar()
         editor_footer = tk.Frame(dialog, bg=CARD)
         editor_footer.pack(side="bottom", fill="x", before=table_frame)
+
+        def record_current(variable):
+            variable.set(precise_clock_label(self.original_position()))
+
+        def dialog_fraction(event):
+            return (event.x-8)/max(1, dialog_progress.winfo_width()-16)
+
+        def dialog_seek_press(event):
+            dialog_progress.focus_set()
+            self.begin_seek()
+            self.seek_fraction(dialog_fraction(event))
+            return "break"
+
+        def dialog_seek_motion(event):
+            if self.seeking:
+                self.seek_fraction(dialog_fraction(event))
+            return "break"
+
+        def dialog_seek_release(event):
+            if self.seeking:
+                self.seek_fraction(dialog_fraction(event))
+                self.end_seek()
+            return "break"
+
+        dialog_progress.bind("<ButtonPress-1>", dialog_seek_press)
+        dialog_progress.bind("<B1-Motion>", dialog_seek_motion)
+        dialog_progress.bind("<ButtonRelease-1>", dialog_seek_release)
+
+        def toggle_dialog_play():
+            if self.player.active and not self.player.cancel.is_set():
+                self.pause("片段设置面板")
+                return
+            if self.playing_mode == "游戏演奏":
+                # 游戏必须重新获得前台焦点，继续游戏演奏时关闭编辑面板。
+                dialog.grab_release()
+                dialog.destroy()
+                self.overlay.return_to_game(start=True)
+                return
+            dialog.grab_release()
+            self.play(True)
+            if dialog.winfo_exists():
+                dialog.grab_set()
+
+        dialog_play.configure(command=toggle_dialog_play)
+
+        def refresh_live():
+            try:
+                if not dialog.winfo_exists():
+                    return
+            except tk.TclError:
+                return
+            current = self.original_position()
+            position_value.set(precise_clock_label(current))
+            if self.plan and self.plan.duration:
+                dialog_progress.set(self.player.position/self.plan.duration*100)
+            if self.player.active and not self.player.cancel.is_set():
+                dialog_play_text.set("Ⅱ 暂停播放")
+            elif self.playing_mode == "游戏演奏" and self.player.paused:
+                dialog_play_text.set("▷ 继续游戏并关闭")
+            elif self.player.paused:
+                dialog_play_text.set("▷ 继续播放")
+            else:
+                dialog_play_text.set("▷ 开始试听")
+            dialog.after(80, refresh_live)
+
+        refresh_live()
 
         def refresh(selected=None):
             table.delete(*table.get_children())
@@ -616,11 +711,30 @@ class App:
             draft.clear()
             refresh()
 
-        def save():
+        saving = [False]
+
+        def finish_save():
+            if not dialog.winfo_exists():
+                return
+            if self.player.active or self.busy:
+                dialog.after(40, finish_save)
+                return
             if self.rebuild_plan(segments=draft):
+                self.seeking = False
                 dialog.destroy()
             else:
+                saving[0] = False
                 error_text.set(self.detail.get())
+
+        def save():
+            if saving[0]:
+                return
+            saving[0] = True
+            if self.player.active or self.busy:
+                self.pause("保存片段")
+                dialog.after(40, finish_save)
+            else:
+                finish_save()
 
         table.bind("<<TreeviewSelect>>", select)
         actions = tk.Frame(editor_footer, bg=CARD)

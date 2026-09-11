@@ -4,11 +4,12 @@ import gc
 import tempfile
 import time
 import tkinter as tk
+from tkinter import ttk
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from app import App
+from app import App, parse_clock
 from music import parse_jianpu
 from test_music import FakeOutput
 
@@ -271,7 +272,7 @@ class TransportTests(unittest.TestCase):
         self.app.play(True)
         self.wait_playing()
         self.assertEqual(self.outputs[0].pitches[0], 65)
-        self.assertEqual(str(self.app.segment_button["state"]), "disabled")
+        self.assertEqual(str(self.app.segment_button["state"]), "normal")
         self.app.pause()
         self.pump(lambda: not self.app.busy)
         self.app.play(True)
@@ -295,6 +296,44 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(self.app.player.position, position)
         self.assertTrue(self.app.player.paused)
         self.assertEqual(self.app.segments, [])
+
+    def test_segment_selection_opens_during_playback_and_supports_pause_drag_and_record(self):
+        self.app.play(True)
+        self.wait_playing()
+        dialog = self.app.segments_dialog()
+        self.root.update()
+        self.assertEqual(str(self.app.segment_button["state"]), "normal")
+        self.assertTrue(self.app.player.active)
+        dialog.segment_start_button.invoke()
+        start = parse_clock(dialog.segment_start_value.get())
+        self.assertGreater(start, 0)
+        dialog.segment_play.invoke()
+        self.pump(lambda: not self.app.busy)
+        position = self.app.player.position
+        width = dialog.segment_progress.winfo_width()-16
+        dialog.segment_progress.event_generate("<ButtonPress-1>", x=round(8+width*0.5), y=8)
+        dialog.segment_progress.event_generate("<B1-Motion>", x=round(8+width*0.75), y=8)
+        dialog.segment_progress.event_generate("<ButtonRelease-1>", x=round(8+width*0.75), y=8)
+        self.assertGreater(self.app.player.position, position)
+        dialog.segment_end_button.invoke()
+        end = parse_clock(dialog.segment_end_value.get())
+        self.assertGreater(end, start)
+        entries, table, buttons = self.app_segment_dialog_widgets(dialog)
+        buttons["添加到列表"].invoke()
+        buttons["保存片段"].invoke()
+        self.assertEqual(len(self.app.segments), 1)
+        self.assertAlmostEqual(self.app.segments[0][0], start, delta=0.2)
+        self.assertAlmostEqual(self.app.segments[0][1], end, delta=0.2)
+
+    def app_segment_dialog_widgets(self, dialog):
+        def descendants(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from descendants(child)
+        widgets = list(descendants(dialog))
+        return ([widget for widget in widgets if isinstance(widget, ttk.Entry)],
+                next(widget for widget in widgets if isinstance(widget, ttk.Treeview)),
+                {str(widget["text"]): widget for widget in widgets if isinstance(widget, ttk.Button)})
 
 
 if __name__ == "__main__":
