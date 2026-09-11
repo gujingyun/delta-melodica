@@ -17,6 +17,7 @@ import uuid
 
 from music import DEMO_SCORES, Mapping, compile_plan, parse_jianpu, pitch_name, read_midi
 from player import Player
+from overlay import Overlay
 from win_input import (Hotkeys, PreviewOutput, WindowsOutput, foreground, target_matches,
                        matching_windows, process_elevated, permission_problem, restart_as_admin)
 
@@ -50,7 +51,7 @@ class App:
         self.log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         self.log.addHandler(self.log_handler)
         self.elevated = process_elevated()
-        self.log.info("启动 v0.2；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
+        self.log.info("启动 v0.3；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
         self.settings = DEFAULTS.copy()
         self.load_error = None
         try:
@@ -84,11 +85,13 @@ class App:
         self.hotkey_status = tk.StringVar(value="热键正在初始化")
         self._build()
         self._load_library()
+        self.overlay = Overlay(self)
         self.hotkeys = None if smoke else Hotkeys(
             lambda: self.events.put(("toggle", None)),
             lambda: self.stop("F9"),
             lambda text: self.events.put(("warning", text)),
             lambda text: self.events.put(("hotkeys", text)),
+            lambda: self.events.put(("overlay", None)),
         )
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.after(40, self._poll)
@@ -104,7 +107,7 @@ class App:
 
     def _build(self):
         root = self.root
-        root.title("口风琴助手 v0.2 · MIDI 自动演奏")
+        root.title("口风琴助手 v0.3 · MIDI 自动演奏")
         root.geometry("1120x850")
         root.minsize(1000, 830)
         root.configure(bg=BG)
@@ -133,11 +136,12 @@ class App:
         settings = ttk.Button(header, text="键位与设置", command=self.settings_dialog)
         settings.pack(side="right")
         self.locked_widgets.append(settings)
+        ttk.Button(header, text="游戏悬浮窗  F7", command=lambda: self.overlay.begin_edit()).pack(side="right", padx=(0, 12))
         if self.elevated is not True:
             self.admin_button = ttk.Button(header, text="以管理员身份重启", command=self.elevate)
             self.admin_button.pack(side="right", padx=(0, 12))
             self.locked_widgets.append(self.admin_button)
-        tk.Label(header, text="v0.2 · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
+        tk.Label(header, text="v0.3 · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
 
         body = tk.Frame(root, bg=BG)
         body.pack(fill="both", expand=True, padx=28)
@@ -217,7 +221,7 @@ class App:
         log_button = tk.Label(bottom, text="查看诊断日志", bg=BG, fg=ACCENT, cursor="hand2", font=("Microsoft YaHei UI", 9))
         log_button.pack(side="right")
         log_button.bind("<Button-1>", lambda event: self.show_log())
-        self.footer = tk.Label(root, text="操作：选曲 → 试听 → 游戏内取出口风琴 → 按 F8 开始　｜　F9 随时停止 · 切出目标窗口自动停止",
+        self.footer = tk.Label(root, text="游戏内：F7 操作悬浮窗　F8 播放 / 停止　F9 紧急停止　｜　悬浮窗建议配合无边框窗口模式",
                  bg=BG, fg=MUTED, font=("Microsoft YaHei UI", 9))
         self.footer.pack(anchor="w", padx=28, pady=(5, 10))
 
@@ -457,8 +461,8 @@ class App:
             self.log.info("本次为游戏内七音测试；10 秒倒计时；之后恢复普通演奏模式")
         self.log.info("开始请求：%s；曲目=%s；音符=%s", self.playing_mode, self.song.title, len(self.plan.notes))
         self._set_busy(True)
-        self.status.set("正在准备" if preview else "请切回游戏，取出口风琴")
-        self.detail.set("试听使用本机合成音色。" if preview else "倒计时结束后开始。确认角色已进入口风琴演奏状态；F9 随时停止。")
+        self.status.set("正在准备" if preview else "准备游戏演奏")
+        self.detail.set("试听使用本机合成音色。" if preview else "倒计时结束后开始，请保持游戏内口风琴打开；F9 随时停止。")
         try:
             self.player.start(self.plan, PreviewOutput if preview else game_output, countdown, settings["gate"] / 100)
         except Exception as error:
@@ -477,7 +481,10 @@ class App:
                 kind, value = self.events.get_nowait()
                 if kind == "toggle":
                     self.log.info("收到 F8 热键；当前忙碌=%s", self.busy)
-                    self.stop("F8") if self.busy else self.play(False)
+                    self.overlay.toggle_play()
+                elif kind == "overlay":
+                    self.log.info("收到 F7 悬浮窗热键")
+                    self.overlay.toggle_edit()
                 elif kind == "warning":
                     self.log.warning(value)
                     self.detail.set(value)
@@ -485,7 +492,7 @@ class App:
                     self.hotkey_status.set(value)
                     self.log.info("热键状态：%s", value)
                 elif kind == "countdown":
-                    self.status.set(f"{value} 秒后开始 · 请切回游戏")
+                    self.status.set(f"{value} 秒后开始 · 保持口风琴打开")
                 elif kind == "started":
                     self.log.info("已开始：%s", self.playing_mode)
                     self.started_at = time.perf_counter()
@@ -570,6 +577,7 @@ class App:
     def close(self):
         self.closing = True
         self.player.close()
+        self.overlay.close()
         if self.hotkeys:
             self.hotkeys.close()
         self.log.info("关闭助手")
@@ -584,6 +592,16 @@ def main():
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--game-test", action="store_true", help="10 秒后向目标游戏播放小星星开头七音，仅执行一次")
     args = parser.parse_args()
+    # EXE 使用 requireAdministrator 清单；源码运行也请求提权，冒烟测试除外。
+    if not args.smoke and process_elevated() is False:
+        try:
+            restart_as_admin(args.data_dir, ["--game-test"] if args.game_test else [])
+        except OSError as error:
+            notice = tk.Tk()
+            notice.withdraw()
+            messagebox.showerror("需要管理员权限", str(error), parent=notice)
+            notice.destroy()
+        return
     try:
         import ctypes
         ctypes.windll.shcore.SetProcessDpiAwareness(1)

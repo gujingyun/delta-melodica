@@ -53,6 +53,19 @@ user32.PeekMessageW.argtypes = (ct.POINTER(wt.MSG), wt.HWND, wt.UINT, wt.UINT, w
 user32.IsWindowVisible.argtypes = (wt.HWND,)
 WNDENUMPROC = ct.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
 user32.EnumWindows.argtypes = (WNDENUMPROC, wt.LPARAM)
+user32.GetAncestor.argtypes = (wt.HWND, wt.UINT)
+user32.GetAncestor.restype = wt.HWND
+user32.IsWindow.argtypes = (wt.HWND,)
+user32.IsIconic.argtypes = (wt.HWND,)
+user32.ShowWindow.argtypes = (wt.HWND, ct.c_int)
+user32.SetForegroundWindow.argtypes = (wt.HWND,)
+user32.SetWindowPos.argtypes = (wt.HWND, wt.HWND, ct.c_int, ct.c_int, ct.c_int, ct.c_int, wt.UINT)
+_get_window_long = user32.GetWindowLongPtrW if ct.sizeof(ct.c_void_p) == 8 else user32.GetWindowLongW
+_set_window_long = user32.SetWindowLongPtrW if ct.sizeof(ct.c_void_p) == 8 else user32.SetWindowLongW
+_get_window_long.argtypes = (wt.HWND, ct.c_int)
+_get_window_long.restype = ct.c_ssize_t
+_set_window_long.argtypes = (wt.HWND, ct.c_int, ct.c_ssize_t)
+_set_window_long.restype = ct.c_ssize_t
 kernel32.OpenProcess.argtypes = (wt.DWORD, wt.BOOL, wt.DWORD)
 kernel32.OpenProcess.restype = wt.HANDLE
 kernel32.CloseHandle.argtypes = (wt.HANDLE,)
@@ -82,6 +95,37 @@ def window_info(hwnd) -> tuple[int, int, str]:
 
 def foreground() -> tuple[int, int, str]:
     return window_info(user32.GetForegroundWindow())
+
+
+def root_window(hwnd):
+    return user32.GetAncestor(hwnd, 2) or hwnd
+
+
+def overlay_style(hwnd, interactive=False):
+    # 观看状态不激活且鼠标穿透，避免演奏时的鼠标变音误触悬浮窗。
+    style = _get_window_long(hwnd, -20)
+    style |= 0x00080000 | 0x00000080
+    style &= ~0x00040000
+    if interactive:
+        style &= ~(0x00000020 | 0x08000000)
+    else:
+        style |= 0x00000020 | 0x08000000
+    ct.set_last_error(0)
+    result = _set_window_long(hwnd, -20, style)
+    error = ct.get_last_error()
+    if not result and error:
+        raise OSError(error, "无法设置悬浮窗样式")
+    user32.SetWindowPos(hwnd, wt.HWND(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0020)
+
+
+def activate_window(window):
+    hwnd, pid, _ = window
+    if not user32.IsWindow(hwnd) or window_info(hwnd)[1] != pid:
+        raise RuntimeError("目标窗口已经关闭，请重新进入游戏。")
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, 9)
+    if foreground()[:2] != window[:2] and not user32.SetForegroundWindow(hwnd):
+        raise RuntimeError("Windows 没有切回目标窗口，请点击游戏后按 F8。")
 
 
 def matching_windows(keywords):
@@ -124,9 +168,9 @@ def permission_problem(target_pid, query=process_elevated):
     return None
 
 
-def restart_as_admin(data_dir):
+def restart_as_admin(data_dir, extra_args=None):
     # 用户点击按钮后才调用系统提权弹窗，取消时保持当前软件运行。
-    arguments = ["--data-dir", str(data_dir)]
+    arguments = ["--data-dir", str(data_dir), *(extra_args or [])]
     if not getattr(sys, "frozen", False):
         arguments.insert(0, str(Path(__file__).with_name("app.py")))
     result = shell32.ShellExecuteW(None, "runas", sys.executable, subprocess.list2cmdline(arguments), str(Path(sys.executable).parent), 1)
@@ -233,9 +277,10 @@ class PreviewOutput:
 
 
 class Hotkeys:
-    def __init__(self, toggle, stop, report, status=None):
+    def __init__(self, toggle, stop, report, status=None, overlay=None):
         self.toggle, self.stop, self.report = toggle, stop, report
         self.status = status or (lambda text: None)
+        self.overlay = overlay
         self.exit = threading.Event()
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
@@ -247,7 +292,10 @@ class Hotkeys:
             # 提前建立线程消息队列，热键消息始终在注册它的线程中读取。
             message = wt.MSG()
             user32.PeekMessageW(ct.byref(message), None, 0, 0, 0)
-            for identity, vk, name in ((801, 0x77, "F8"), (802, 0x78, "F9")):
+            bindings = [(801, 0x77, "F8"), (802, 0x78, "F9")]
+            if self.overlay:
+                bindings.insert(0, (803, 0x76, "F7"))
+            for identity, vk, name in bindings:
                 if user32.RegisterHotKey(None, identity, 0x4000, vk):
                     registered.append(identity)
                     states.append(f"{name} 就绪")
@@ -259,7 +307,7 @@ class Hotkeys:
             while not self.exit.wait(0.015):
                 while user32.PeekMessageW(ct.byref(message), None, 0, 0, 1):
                     if message.message == 0x0312 and message.wParam in registered:
-                        (self.toggle if message.wParam == 801 else self.stop)()
+                        {801: self.toggle, 802: self.stop, 803: self.overlay}[message.wParam]()
         finally:
             for identity in registered:
                 user32.UnregisterHotKey(None, identity)
