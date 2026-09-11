@@ -1,0 +1,254 @@
+"""乐谱解析、单旋律整理与口风琴映射。"""
+from __future__ import annotations
+
+from bisect import bisect_right
+from collections import defaultdict, deque
+from dataclasses import dataclass, field
+from fractions import Fraction
+from pathlib import Path
+import math
+import re
+
+SCALE = (0, 2, 4, 5, 7, 9, 11)
+
+
+@dataclass(frozen=True)
+class Note:
+    start: float
+    end: float
+    pitch: int
+    track: int = 0
+
+
+@dataclass
+class Song:
+    title: str
+    notes: list[Note]
+    tracks: dict[int, str] = field(default_factory=lambda: {0: "主旋律"})
+    duration: float = 0.0
+
+    def __post_init__(self):
+        self.duration = max(self.duration, max((n.end for n in self.notes), default=0))
+
+
+@dataclass(frozen=True)
+class Mapping:
+    keys: str = "zxcvbnm,"
+    base: int = 60
+    low: int = -12
+    high: int = 12
+    half: int = 1
+
+    def validate(self):
+        if len(self.keys) != 8 or len(set(self.keys.lower())) != 8 or any(k not in "abcdefghijklmnopqrstuvwxyz,./;[]-=" for k in self.keys.lower()):
+            raise ValueError("音阶键必须是 8 个不同的英文字母或标点，例如 zxcvbnm,（末尾为英文逗号）。")
+        if not 24 <= self.base <= 96:
+            raise ValueError("中央 1 的 MIDI 音高必须在 24～96 之间。")
+        if not all(-24 <= x <= 24 for x in (self.low, self.high)) or self.half not in (-1, 1):
+            raise ValueError("左／右键偏移需在 -24～24 半音之间，中键为 +1 或 -1。")
+
+
+@dataclass(frozen=True)
+class Fingering:
+    key: str
+    buttons: tuple[str, ...]
+    pitch: int
+
+    @property
+    def label(self):
+        names = {"left": "左", "middle": "中", "right": "右"}
+        return " + ".join([*(names[b] for b in self.buttons), self.key.upper()])
+
+
+@dataclass(frozen=True)
+class PlayNote:
+    start: float
+    end: float
+    source_pitch: int
+    fingering: Fingering
+
+
+@dataclass
+class Plan:
+    notes: list[PlayNote]
+    duration: float
+    folded: int
+    source_count: int
+
+
+def pitch_name(pitch: int) -> str:
+    return ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")[pitch % 12] + str(pitch // 12 - 1)
+
+
+def parse_jianpu(text: str, bpm: float = 100, title: str = "自定义简谱") -> Song:
+    if not math.isfinite(bpm) or not 20 <= bpm <= 300:
+        raise ValueError("速度需在 20～300 BPM 之间。")
+    notes, cursor = [], 0.0
+    pattern = re.compile(r"([+-]?)([#b]?)([0-7])(?::(\d+(?:/\d+|\.\d+)?))?")
+    clean = re.sub(r"//[^\n]*", "", text).replace("|", " ").replace("，", " ")
+    tokens = clean.split()
+    if len(tokens) > 30000:
+        raise ValueError("乐谱最多支持 30000 个音符。")
+    for token in tokens:
+        match = pattern.fullmatch(token)
+        if not match:
+            raise ValueError(f"无法识别「{token}」。请用空格分隔，例如：1 2 3:2 +1 -5 #4 0。")
+        octave, accidental, degree, duration = match.groups()
+        try:
+            beats = float(Fraction(duration or "1"))
+        except (ValueError, ZeroDivisionError, OverflowError):
+            raise ValueError(f"「{token}」的时值不正确。") from None
+        if not 0.03125 <= beats <= 64:
+            raise ValueError("每个音符的时值需在 1/32～64 拍之间。")
+        end = cursor + beats * 60 / bpm
+        if degree != "0":
+            pitch = 60 + SCALE[int(degree)-1] + {"": 0, "+": 12, "-": -12}[octave]
+            pitch += {"": 0, "#": 1, "b": -1}[accidental]
+            notes.append(Note(cursor, end, pitch))
+        elif octave or accidental:
+            raise ValueError("休止符 0 不需要八度或升降号。")
+        cursor = end
+    if not notes:
+        raise ValueError("乐谱中没有可演奏的音符。")
+    if cursor > 1800:
+        raise ValueError("第一版支持最长 30 分钟的曲目。")
+    return Song(title.strip() or "自定义简谱", notes, duration=cursor)
+
+
+def read_midi(path: str | Path) -> Song:
+    import mido
+    path = Path(path)
+    if path.stat().st_size > 10 * 1024 * 1024:
+        raise ValueError("MIDI 文件不能超过 10 MB。")
+    midi = mido.MidiFile(path)
+    if midi.type == 2 or midi.ticks_per_beat <= 0:
+        raise ValueError("请使用 PPQ 时间格式的 MIDI 0／1 型文件，不支持独立序列或 SMPTE 时间格式。")
+    tempos, events, tracks, last_tick = [(0, -1, 500000)], [], {}, 0
+    count = 0
+    for track_index, track in enumerate(midi.tracks):
+        tick, name = 0, f"音轨 {track_index + 1}"
+        for msg in track:
+            count += 1
+            if count > 200000:
+                raise ValueError("MIDI 事件过多，请先导出需要的旋律音轨。")
+            tick += msg.time
+            if msg.type == "track_name" and msg.name.strip():
+                name = msg.name.strip()
+            if msg.type == "set_tempo":
+                if msg.tempo <= 0:
+                    raise ValueError("MIDI 中包含无效速度。")
+                tempos.append((tick, count, msg.tempo))
+            if msg.type in ("note_on", "note_off") and msg.channel != 9:
+                events.append((tick, count, track_index, msg))
+        tracks[track_index] = name
+        last_tick = max(last_tick, tick)
+    # 先建立全局速度表，使其他音轨上的变速也能正确影响旋律。
+    ticks, times, rates = [0], [0.0], [500000]
+    for tick, _, tempo in sorted(tempos):
+        elapsed = times[-1] + (tick - ticks[-1]) * rates[-1] / midi.ticks_per_beat / 1_000_000
+        ticks.append(tick)
+        times.append(elapsed)
+        rates.append(tempo)
+
+    def seconds(tick):
+        index = bisect_right(ticks, tick) - 1
+        return times[index] + (tick-ticks[index]) * rates[index] / midi.ticks_per_beat / 1_000_000
+
+    duration = seconds(last_tick)
+    if duration > 1800:
+        raise ValueError("第一版支持最长 30 分钟的 MIDI。")
+    active, notes = defaultdict(deque), []
+    for tick, _, track, msg in sorted(events):
+        key = (track, msg.channel, msg.note)
+        if msg.type == "note_on" and msg.velocity > 0:
+            active[key].append(tick)
+        elif active[key]:
+            start = active[key].popleft()
+            if tick > start:
+                notes.append(Note(seconds(start), seconds(tick), msg.note, track))
+    for (track, _, pitch), starts in active.items():
+        for start in starts:
+            if last_tick > start:
+                notes.append(Note(seconds(start), seconds(last_tick), pitch, track))
+    if not notes:
+        raise ValueError("没有找到旋律音符，打击乐通道已自动忽略。")
+    if len(notes) > 30000:
+        raise ValueError("旋律音符超过 30000 个，请先精简 MIDI。")
+    used = {n.track for n in notes}
+    return Song(path.stem, sorted(notes, key=lambda n: (n.start, n.pitch)), {k: v for k, v in tracks.items() if k in used}, duration)
+
+
+def monophonic(notes: list[Note]) -> list[Note]:
+    # 每个时间段取仍在发声的最高音，避免不同八度修饰键互相冲突。
+    import heapq
+    events = defaultdict(list)
+    for index, note in enumerate(notes):
+        events[note.start].append((True, index))
+        events[note.end].append((False, index))
+    heap, active, result = [], set(), []
+    previous, winner = None, None
+    last_id = None
+    for time in sorted(events):
+        if previous is not None and winner is not None and time > previous:
+            source = notes[winner]
+            if result and last_id == winner and abs(result[-1].end-previous) < 1e-8:
+                result[-1] = Note(result[-1].start, time, source.pitch, source.track)
+            else:
+                result.append(Note(previous, time, source.pitch, source.track))
+            last_id = winner
+        for on, index in events[time]:
+            if on:
+                active.add(index)
+                heapq.heappush(heap, (-notes[index].pitch, -notes[index].start, index))
+            else:
+                active.discard(index)
+        while heap and heap[0][2] not in active:
+            heapq.heappop(heap)
+        winner = heap[0][2] if heap else None
+        previous = time
+    return result
+
+
+def fingerings(mapping: Mapping) -> dict[int, Fingering]:
+    mapping.validate()
+    result = {}
+    # 优先不用鼠标的指法，其次仅八度键，最后半音组合。
+    choices = [(0, ()), (mapping.low, ("left",)), (mapping.high, ("right",))]
+    choices += [(offset + mapping.half, buttons + ("middle",)) for offset, buttons in list(choices)]
+    for offset, buttons in choices:
+        for key, degree in zip(mapping.keys.lower(), (*SCALE, 12)):
+            pitch = mapping.base + degree + offset
+            if 0 <= pitch <= 127:
+                result.setdefault(pitch, Fingering(key, buttons, pitch))
+    return result
+
+
+def compile_plan(song: Song, mapping: Mapping, track: int | None = None, speed: float = 1, transpose: int = 0) -> Plan:
+    if not math.isfinite(speed) or not 0.25 <= speed <= 2:
+        raise ValueError("速度倍率需在 0.25～2.00 之间。")
+    if not -24 <= transpose <= 24:
+        raise ValueError("移调需在 -24～24 半音之间。")
+    lookup = fingerings(mapping)
+    source = [n for n in song.notes if track is None or n.track == track]
+    if not source:
+        raise ValueError("所选音轨没有音符。")
+    result, folded = [], 0
+    for note in monophonic(source):
+        pitch = note.pitch + transpose
+        fingering = lookup.get(pitch)
+        if fingering is None:
+            candidates = [p for p in lookup if p % 12 == pitch % 12]
+            if not candidates:
+                raise ValueError(f"当前映射无法演奏 {pitch_name(pitch)}，请调整鼠标半音／八度设置。")
+            fingering = lookup[min(candidates, key=lambda p: (abs(p-pitch), p))]
+            folded += 1
+        result.append(PlayNote(note.start/speed, note.end/speed, pitch, fingering))
+    return Plan(result, song.duration/speed, folded, len(source))
+
+
+DEMO_SCORES = {
+    "小星星": (100, "1 1 5 5 6 6 5:2 | 4 4 3 3 2 2 1:2 | 5 5 4 4 3 3 2:2 | 5 5 4 4 3 3 2:2 | 1 1 5 5 6 6 5:2 | 4 4 3 3 2 2 1:2"),
+    "欢乐颂": (112, "3 3 4 5 | 5 4 3 2 | 1 1 2 3 | 3:1.5 2:0.5 2:2 | 3 3 4 5 | 5 4 3 2 | 1 1 2 3 | 2:1.5 1:0.5 1:2"),
+    "两只老虎": (110, "1 2 3 1 | 1 2 3 1 | 3 4 5:2 | 3 4 5:2 | 5:0.5 6:0.5 5:0.5 4:0.5 3 1 | 5:0.5 6:0.5 5:0.5 4:0.5 3 1 | 1 -5 1:2 | 1 -5 1:2"),
+    "音阶校准 · 低中高与半音": (90, "-1 -2 -3 -4 -5 -6 -7 | 1 2 3 4 5 6 7 | +1 +2 +3 +4 +5 +6 +7 | 1 #1 2 #2 3 4 #4 5 #5 6 #6 7 +1:2"),
+}
