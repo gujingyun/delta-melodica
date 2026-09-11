@@ -111,6 +111,43 @@ class SongSettingsTests(unittest.TestCase):
         self.assertTrue(self.app.plan.notes)
         self.assertIn("曲目设置读取失败", self.app.detail.get())
 
+    def test_delete_imported_song_removes_file_and_its_saved_preferences(self):
+        path = self.add_midi("33333333__待删除.mid")
+        self.app._load_library(path)
+        self.app.change_speed(1)
+        self.app.change_transpose(2)
+        self.app.rebuild_plan(segments=[(0, 1)])
+        preference_key = self.app.song_preference_key()
+        self.assertIn(preference_key, self.app.song_preferences)
+        with patch("app.messagebox.askyesno", return_value=False):
+            self.app.delete_song()
+        self.assertTrue(path.exists())
+        with patch("app.messagebox.askyesno", return_value=True):
+            self.app.delete_song()
+        self.assertFalse(path.exists())
+        self.assertNotIn(preference_key, self.app.song_preferences)
+        self.assertTrue(self.app.current_source[0] == "demo")
+        self.assertEqual(str(self.app.delete_button["state"]), "disabled")
+
+    def test_demo_song_cannot_be_deleted_and_outside_path_is_rejected(self):
+        self.assertEqual(self.app.current_source[0], "demo")
+        self.app.delete_song()
+        self.assertIn("内置示例曲目不能删除", self.app.detail.get())
+        outside = Path(self.folder.name).parent / "不能删除.mid"
+        outside.write_bytes(b"MIDI")
+        try:
+            self.app.entries.append(("外部文件", ("file", outside)))
+            self.app.library.insert("end", "  外部文件")
+            self.app.library.selection_clear(0, "end")
+            self.app.library.selection_set(self.app.library.size()-1)
+            self.app.current_source = ("file", outside)
+            self.app._update_delete_button()
+            self.app.delete_song()
+            self.assertTrue(outside.exists())
+            self.assertIn("不在本地曲库目录", self.app.detail.get())
+        finally:
+            outside.unlink(missing_ok=True)
+
     def test_failed_save_keeps_plan_and_previous_file_with_visible_error(self):
         self.app.change_speed(1)
         path = Path(self.folder.name, "song-settings.json")

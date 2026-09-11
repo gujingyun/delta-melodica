@@ -75,7 +75,7 @@ class App:
         self.log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         self.log.addHandler(self.log_handler)
         self.elevated = process_elevated()
-        self.log.info("启动 三角洲口风琴 v0.9；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
+        self.log.info("启动 三角洲口风琴 v0.10；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
         self.settings = DEFAULTS.copy()
         self.load_error = None
         try:
@@ -159,7 +159,7 @@ class App:
 
     def _build(self):
         root = self.root
-        root.title("三角洲口风琴 v0.9 · MIDI 自动演奏")
+        root.title("三角洲口风琴 v0.10 · MIDI 自动演奏")
         root.geometry("1120x850")
         root.minsize(1000, 830)
         root.configure(bg=BG)
@@ -193,7 +193,7 @@ class App:
             self.admin_button = ttk.Button(header, text="以管理员身份重启", command=self.elevate)
             self.admin_button.pack(side="right", padx=(0, 12))
             self.locked_widgets.append(self.admin_button)
-        tk.Label(header, text="v0.9 · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
+        tk.Label(header, text="v0.10 · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
 
         body = tk.Frame(root, bg=BG)
         body.pack(fill="both", expand=True, padx=28)
@@ -212,6 +212,9 @@ class App:
             button = ttk.Button(sidebar, text=text, command=command)
             button.pack(fill="x", padx=18, pady=(0, 12))
             self.locked_widgets.append(button)
+        self.delete_button = ttk.Button(sidebar, text="删除选中曲目", command=self.delete_song)
+        self.delete_button.pack(fill="x", padx=18, pady=(0, 12))
+        self.locked_widgets.append(self.delete_button)
         tk.Label(sidebar, text="支持 .mid / .midi\n多音轨可单独选择旋律", justify="left", bg=CARD, fg=MUTED, font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=18, pady=(0, 20))
 
         content = tk.Frame(body, bg=BG)
@@ -390,6 +393,7 @@ class App:
                 song.title = name
                 hint = f"MIDI · {len(song.tracks)} 条旋律音轨 · 保留原始变速"
             self.song, self.current_source = song, source
+            self._update_delete_button()
             self.title.set(song.title)
             self.subtitle.set(hint)
             self.track_ids = ["auto", None, *song.tracks]
@@ -405,7 +409,8 @@ class App:
             if preference_warning:
                 self.detail.set(preference_warning)
         except Exception as error:
-            self.song, self.plan = None, None
+            self.song, self.plan, self.current_source = None, None, None
+            self._update_delete_button()
             self.title.set("曲目读取失败")
             self.stats.set("")
             self.detail.set(str(error))
@@ -871,6 +876,55 @@ class App:
             state = "disabled" if busy else ("readonly" if isinstance(widget, ttk.Combobox) else "normal")
             widget.configure(state=state)
         self._update_play_buttons()
+        self._update_delete_button()
+
+    def _update_delete_button(self):
+        if not hasattr(self, "delete_button"):
+            return
+        can_delete = bool(self.current_source and self.current_source[0] == "file" and not self.busy)
+        self.delete_button.configure(state="normal" if can_delete else "disabled")
+
+    def delete_song(self):
+        """删除当前选中的用户曲目，并移除对应的曲目参数记忆。"""
+        if self.busy:
+            return
+        selection = self.library.curselection()
+        if not selection:
+            return
+        name, source = self.entries[selection[0]]
+        if source[0] != "file":
+            self.detail.set("内置示例曲目不能删除。")
+            return
+        path = Path(source[1])
+        try:
+            library_root = self.library_dir.resolve()
+            if path.resolve().parent != library_root or not path.is_file():
+                raise OSError("曲目文件不在本地曲库目录中。")
+        except OSError as error:
+            self.detail.set(f"无法删除曲目：{error}")
+            return
+        if not messagebox.askyesno("删除曲目", f"确定删除“{name}”吗？\n\n这只会删除曲库副本，不会影响原始 MIDI 文件。", parent=self.root):
+            return
+        try:
+            path.unlink()
+        except OSError as error:
+            messagebox.showerror("删除失败", f"无法删除曲目文件：{error}", parent=self.root)
+            return
+        preference_key = f"file:{path.name}"
+        candidate = self.song_preferences.copy()
+        candidate.pop(preference_key, None)
+        try:
+            destination = self.data_dir / "song-settings.json"
+            temporary = destination.with_suffix(".tmp")
+            temporary.write_text(json.dumps(candidate, ensure_ascii=False, indent=2), encoding="utf-8")
+            temporary.replace(destination)
+            self.song_preferences = candidate
+            message = f"已删除曲目“{name}”。"
+        except OSError as error:
+            self.log.warning("删除曲目后的设置清理失败：%s", error)
+            message = f"已删除曲目“{name}”，但对应参数记忆清理失败：{error}"
+        self._load_library()
+        self.detail.set(message)
 
     def _update_play_buttons(self):
         for button, preview, label in ((self.preview_button, True, "本机试听"), (self.play_button, False, "游戏演奏  F8")):
