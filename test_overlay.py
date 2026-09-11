@@ -37,7 +37,9 @@ root.mainloop()
 class OverlayTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.temp = tempfile.TemporaryDirectory(prefix="overlay-test-", dir=Path(__file__).resolve().parent.parent)
+        work_dir = Path(__file__).resolve().parent / "work"
+        work_dir.mkdir(exist_ok=True)
+        cls.temp = tempfile.TemporaryDirectory(prefix="overlay-test-", dir=work_dir)
         cls.folder = Path(cls.temp.name)
         info, cls.clicked = cls.folder / "window.json", cls.folder / "clicked.txt"
         cls.fixture = subprocess.Popen([sys.executable, "-c", FIXTURE, str(info), str(cls.clicked)], cwd=Path(__file__).parent)

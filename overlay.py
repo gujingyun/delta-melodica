@@ -39,7 +39,7 @@ class Overlay:
         self.drag_origin = None
         self.window = tk.Toplevel(app.root)
         self.window.withdraw()
-        self.window.title("口风琴 · 游戏悬浮窗")
+        self.window.title("三角洲口风琴 · 游戏悬浮窗")
         self.window.overrideredirect(True)
         self.window.attributes("-topmost", True)
         self.window.attributes("-alpha", self.alpha)
@@ -181,7 +181,7 @@ class Overlay:
         c = self.canvas
         c.delete("all")
         self.regions = []
-        self._text(16, 21, "口风琴 · 悬浮", ACCENT, 11, True)
+        self._text(16, 21, "三角洲口风琴", ACCENT, 11, True)
         self._text(422, 21, "拖动标题移动" if self.editing else "F7 打开操作", MUTED, 9, anchor="e")
         title = self.app.title.get()
         self._text(16, 54, title[:19] + ("…" if len(title) > 19 else ""), size=15, bold=True)

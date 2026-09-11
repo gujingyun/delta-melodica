@@ -1,4 +1,4 @@
-"""口风琴助手：曲库、音轨选择、试听与游戏演奏界面。"""
+"""三角洲口风琴：曲库、音轨选择、试听与游戏演奏界面。"""
 from __future__ import annotations
 
 import argparse
@@ -52,7 +52,7 @@ class App:
         self.log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         self.log.addHandler(self.log_handler)
         self.elevated = process_elevated()
-        self.log.info("启动 v0.4；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
+        self.log.info("启动 三角洲口风琴 v0.4；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
         self.settings = DEFAULTS.copy()
         self.load_error = None
         try:
@@ -109,7 +109,7 @@ class App:
 
     def _build(self):
         root = self.root
-        root.title("口风琴助手 v0.4 · MIDI 自动演奏")
+        root.title("三角洲口风琴 v0.4 · MIDI 自动演奏")
         root.geometry("1120x850")
         root.minsize(1000, 830)
         root.configure(bg=BG)
@@ -133,7 +133,7 @@ class App:
         header.pack(fill="x", padx=28, pady=(16, 14))
         left = tk.Frame(header, bg=BG)
         left.pack(side="left")
-        tk.Label(left, text="口风琴助手", font=("Microsoft YaHei UI", 22, "bold"), fg=TEXT, bg=BG).pack(anchor="w")
+        tk.Label(left, text="三角洲口风琴", font=("Microsoft YaHei UI", 22, "bold"), fg=TEXT, bg=BG).pack(anchor="w")
         tk.Label(left, text="MELODICA  /  让旋律进入游戏", font=("Microsoft YaHei UI", 10), fg=MUTED, bg=BG).pack(anchor="w", pady=(3, 0))
         settings = ttk.Button(header, text="键位与设置", command=self.settings_dialog)
         settings.pack(side="right")
