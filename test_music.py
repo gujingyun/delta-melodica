@@ -7,10 +7,11 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 import mido
-from music import Mapping, Note, Song, compile_plan, fingerings, monophonic, parse_jianpu, read_midi
-from player import Player
+from music import Mapping, Note, Song, compile_plan, fingerings, monophonic, parse_jianpu, read_midi, piano_melody, recommend_track
+from player import Player, release_time
 from win_input import INPUT, WindowsOutput, keyboard_event, target_matches, permission_problem, process_elevated
 
 
@@ -86,6 +87,74 @@ class MusicTests(unittest.TestCase):
             midi.save(path)
             with self.assertRaises(ValueError):
                 read_midi(path)
+
+
+class PianoTests(unittest.TestCase):
+    def test_accompaniment_tail_is_not_restarted(self):
+        notes = [Note(0, 1.05, 48), Note(0, 1, 72), Note(1.1, 2, 74)]
+        self.assertEqual([n.pitch for n in monophonic(notes)], [72, 48, 74])
+        self.assertEqual([n.pitch for n in piano_melody(notes)], [72, 74])
+
+    def test_staggered_chord_keeps_high_note_at_its_original_onset(self):
+        notes = [Note(0, 0.5, 60), Note(0.028, 0.52, 64), Note(0.055, 0.54, 72)]
+        self.assertEqual(piano_melody(notes), [notes[2]])
+
+    def test_sustained_melody_ignores_new_bass_but_allows_descending_legato(self):
+        notes = [Note(0, 1, 76), Note(0.4, 0.7, 48), Note(0.95, 1.5, 74)]
+        self.assertEqual(piano_melody(notes), [Note(0, 0.95, 76), notes[2]])
+
+    def test_real_fast_notes_and_repeated_notes_are_kept(self):
+        notes = [Note(0, 0.04, 72), Note(0.04, 0.08, 74), Note(0.08, 0.12, 74)]
+        self.assertEqual(piano_melody(notes), notes)
+        repeated = [Note(0, 0.5, 72), Note(0.5, 1, 72)]
+        self.assertEqual(piano_melody(repeated), repeated)
+
+    def test_bridges_short_gaps_without_erasing_phrase_rests(self):
+        song = Song("间隙测试", [Note(0, 0.5, 60), Note(0.56, 1, 62), Note(1.3, 1.8, 64)])
+        plan = compile_plan(song, Mapping(), style="piano", speed=2)
+        self.assertEqual(plan.bridged, 1)
+        self.assertEqual([(n.start, n.end) for n in plan.notes], [(0, 0.28), (0.28, 0.5), (0.65, 0.9)])
+        self.assertEqual(plan.duration, 0.9)
+
+    def test_auto_track_chooses_high_voice_and_respects_manual_selection(self):
+        song = Song("双手钢琴", [Note(0, 1, 48, 2), Note(0, 1, 72, 1)], {1: "Track 1", 2: "Track 2"})
+        self.assertEqual(recommend_track(song), 1)
+        self.assertEqual(compile_plan(song, Mapping(), track="auto", style="piano").notes[0].source_pitch, 72)
+        self.assertEqual(compile_plan(song, Mapping(), track=2, style="piano").notes[0].source_pitch, 48)
+        song.tracks[2] = "Vocal"
+        self.assertEqual(recommend_track(song), 2)
+
+    def test_long_notes_use_fixed_retrigger_gap_and_final_note_is_complete(self):
+        plan = compile_plan(parse_jianpu("1:4 1:4 0:2 2:4", 120), Mapping(), style="piano")
+        a, b, c = plan.notes
+        self.assertAlmostEqual(release_time(a, b, legato=True), 1.975)
+        self.assertEqual(release_time(b, c, legato=True), 4)
+        self.assertEqual(release_time(c, legato=True), 7)
+        self.assertEqual(release_time(a, b, gate=0.85), 1.7)
+
+    def test_actual_scheduler_retriggers_and_releases_legato_modifiers(self):
+        plan = compile_plan(parse_jianpu("-1:2 #1:2 #1:2", 120), Mapping(), style="piano")
+        clock, sent = [100.0], []
+        class RecordedOutput(FakeOutput):
+            def begin(self, fingering):
+                sent.append(("on", clock[0], fingering.buttons))
+                super().begin(fingering)
+
+            def release(self):
+                if self.held:
+                    sent.append(("off", clock[0]))
+                super().release()
+
+        output = RecordedOutput()
+        player = Player(lambda *_: None)
+        player._wait = lambda deadline, output=None: clock.__setitem__(0, deadline)
+        with patch("player.time.perf_counter", side_effect=lambda: clock[0]):
+            player._run(plan, lambda: output, 0, 0.5)
+        self.assertEqual([event[0] for event in sent], ["on", "off", "on", "off", "on", "off"])
+        self.assertEqual([event[2] for event in sent if event[0] == "on"], [("left",), ("middle",), ("middle",)])
+        for event, expected in zip(sent, [100, 100.975, 101, 101.975, 102, 103]):
+            self.assertAlmostEqual(event[1], expected)
+        self.assertTrue(output.closed)
 
 
 class InputTests(unittest.TestCase):

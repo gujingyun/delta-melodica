@@ -10,6 +10,16 @@ class Cancelled(Exception):
     pass
 
 
+def release_time(note, next_note=None, gate=0.85, legato=False):
+    """连奏按完整时值吹奏，只在衔接处留出最多 25 毫秒重新触发。"""
+    if not legato:
+        return note.start+(note.end-note.start)*gate
+    if next_note is None:
+        return note.end
+    gap = min(0.025, (note.end-note.start)*0.25)
+    return min(note.end, next_note.start-gap)
+
+
 class Player:
     def __init__(self, notify):
         self.notify = notify
@@ -66,7 +76,8 @@ class Player:
                     continue
                 output.begin(note.fingering)
                 self.notify("note", (index, note))
-                self._wait(origin+note.start+(note.end-note.start)*gate, output)
+                next_note = plan.notes[index+1] if index+1 < len(plan.notes) else None
+                self._wait(origin+release_time(note, next_note, gate, plan.style == "piano"), output)
                 output.release()
                 self.notify("release", None)
             self._wait(origin+plan.duration, output)

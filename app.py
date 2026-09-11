@@ -15,7 +15,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import uuid
 
-from music import DEMO_SCORES, Mapping, compile_plan, parse_jianpu, pitch_name, read_midi
+from music import DEMO_SCORES, Mapping, compile_plan, parse_jianpu, pitch_name, read_midi, recommend_track
 from player import Player
 from overlay import Overlay
 from win_input import (Hotkeys, PreviewOutput, WindowsOutput, foreground, target_matches,
@@ -29,6 +29,7 @@ MUTED = "#96a9aa"
 ACCENT = "#b7f17c"
 LINE = "#304249"
 ORANGE = "#f1c077"
+PLAY_STYLES = {"钢琴适配 · 连奏": "piano", "原谱 · 分音": "original"}
 
 DEFAULTS = {"keys": "zxcvbnm,", "base": 60, "low": -12, "high": 12, "half": 1,
             "target": "三角洲|Delta Force|DeltaForce", "countdown": 5, "gate": 85}
@@ -51,7 +52,7 @@ class App:
         self.log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         self.log.addHandler(self.log_handler)
         self.elevated = process_elevated()
-        self.log.info("启动 v0.3；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
+        self.log.info("启动 v0.4；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
         self.settings = DEFAULTS.copy()
         self.load_error = None
         try:
@@ -75,6 +76,7 @@ class App:
         self.busy, self.closing = False, False
         self.speed = tk.StringVar(value="1.00")
         self.transpose = tk.StringVar(value="0")
+        self.arrangement = tk.StringVar(value="原谱 · 分音")
         self.track = tk.StringVar()
         self.title = tk.StringVar(value="选择一首音乐")
         self.subtitle = tk.StringVar(value="从曲库开始，或导入你的 MIDI")
@@ -107,7 +109,7 @@ class App:
 
     def _build(self):
         root = self.root
-        root.title("口风琴助手 v0.3 · MIDI 自动演奏")
+        root.title("口风琴助手 v0.4 · MIDI 自动演奏")
         root.geometry("1120x850")
         root.minsize(1000, 830)
         root.configure(bg=BG)
@@ -141,7 +143,7 @@ class App:
             self.admin_button = ttk.Button(header, text="以管理员身份重启", command=self.elevate)
             self.admin_button.pack(side="right", padx=(0, 12))
             self.locked_widgets.append(self.admin_button)
-        tk.Label(header, text="v0.3 · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
+        tk.Label(header, text="v0.4 · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
 
         body = tk.Frame(root, bg=BG)
         body.pack(fill="both", expand=True, padx=28)
@@ -166,11 +168,11 @@ class App:
         content.pack(side="left", fill="both", expand=True)
         track_card = tk.Frame(content, bg=CARD)
         track_card.pack(fill="x")
-        tk.Label(track_card, text="当前曲目", bg=CARD, fg=ACCENT, font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=22, pady=(14, 5))
+        tk.Label(track_card, text="当前曲目", bg=CARD, fg=ACCENT, font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=22, pady=(10, 4))
         tk.Label(track_card, textvariable=self.title, bg=CARD, fg=TEXT, font=("Microsoft YaHei UI", 20, "bold"), anchor="w").pack(fill="x", padx=22)
-        tk.Label(track_card, textvariable=self.subtitle, bg=CARD, fg=MUTED, anchor="w").pack(fill="x", padx=22, pady=(5, 12))
+        tk.Label(track_card, textvariable=self.subtitle, bg=CARD, fg=MUTED, anchor="w").pack(fill="x", padx=22, pady=(3, 6))
         fields = tk.Frame(track_card, bg=CARD)
-        fields.pack(fill="x", padx=22, pady=(0, 14))
+        fields.pack(fill="x", padx=22, pady=(0, 8))
         for column, (label, variable, values, width) in enumerate([
             ("演奏音轨", self.track, [], 26),
             ("速度倍率", self.speed, ["0.25", "0.50", "0.75", "1.00", "1.25", "1.50", "2.00"], 8),
@@ -187,13 +189,24 @@ class App:
                 self.track_combo = combo
                 fields.columnconfigure(0, weight=1)
 
+        adaptation = tk.Frame(track_card, bg=CARD)
+        adaptation.pack(fill="x", padx=22, pady=(0, 10))
+        tk.Label(adaptation, text="演奏方式", bg=CARD, fg=MUTED).pack(side="left", padx=(0, 12))
+        self.style_combo = ttk.Combobox(adaptation, textvariable=self.arrangement,
+                                       values=list(PLAY_STYLES), state="readonly", width=18)
+        self.style_combo.pack(side="left")
+        self.style_combo.bind("<<ComboboxSelected>>", lambda event: self.rebuild_plan())
+        self.locked_widgets.append(self.style_combo)
+        tk.Label(adaptation, text="连奏：整理伴奏碎音，连接短间隙", bg=CARD, fg=MUTED,
+                 font=("Microsoft YaHei UI", 9)).pack(side="left", padx=(14, 0))
+
         score_card = tk.Frame(content, bg=CARD)
         score_card.pack(fill="both", expand=True, pady=(16, 0))
         score_top = tk.Frame(score_card, bg=CARD)
         score_top.pack(fill="x", padx=22, pady=(17, 8))
         tk.Label(score_top, text="旋律预览", bg=CARD, fg=TEXT, font=("Microsoft YaHei UI", 12, "bold")).pack(side="left")
         tk.Label(score_top, textvariable=self.elapsed, bg=CARD, fg=MUTED, font=("Consolas", 11)).pack(side="right")
-        self.roll = tk.Canvas(score_card, bg=DEEP, highlightthickness=0, height=90)
+        self.roll = tk.Canvas(score_card, bg=DEEP, highlightthickness=0, height=70)
         self.roll.pack(fill="both", expand=True, padx=22)
         self.roll.bind("<Configure>", lambda event: self.draw_roll())
         self.progress = ttk.Progressbar(score_card, mode="determinate", maximum=100)
@@ -294,10 +307,14 @@ class App:
             self.song, self.current_source = song, source
             self.title.set(song.title)
             self.subtitle.set(hint)
-            self.track_ids = [None, *song.tracks]
-            values = ["全部音轨 · 取最高音", *(f"{k+1} · {v}" for k, v in song.tracks.items())]
+            self.track_ids = ["auto", None, *song.tracks]
+            recommended = recommend_track(song)
+            values = [f"自动旋律 · {song.tracks[recommended]}", "全部音轨 · 取最高音",
+                      *(f"{k+1} · {v}" for k, v in song.tracks.items())]
             self.track_combo.configure(values=values)
-            self.track_combo.current(1 if len(song.tracks) == 1 else 0)
+            self.track_combo.current(0)
+            is_midi = source[0] == "file" and source[1].suffix.lower() in (".mid", ".midi")
+            self.arrangement.set("钢琴适配 · 连奏" if is_midi else "原谱 · 分音")
             self.rebuild_plan()
         except Exception as error:
             self.song, self.plan = None, None
@@ -311,8 +328,12 @@ class App:
         if not self.song or self.busy:
             return
         try:
-            self.plan = compile_plan(self.song, self.mapping(), self.track_ids[self.track_combo.current()], float(self.speed.get()), int(self.transpose.get()))
-            self.stats.set(f"{len(self.plan.notes)} 个旋律音段  ·  单音演奏  ·  {self.plan.folded} 个音段折回可演奏八度")
+            self.plan = compile_plan(self.song, self.mapping(), self.track_ids[self.track_combo.current()],
+                                     float(self.speed.get()), int(self.transpose.get()), PLAY_STYLES[self.arrangement.get()])
+            if self.plan.style == "piano":
+                self.stats.set(f"{len(self.plan.notes)} 个旋律音  ·  整理 {self.plan.cleaned} 个音段  ·  连接 {self.plan.bridged} 处间隙  ·  {self.plan.folded} 个音折回八度")
+            else:
+                self.stats.set(f"{len(self.plan.notes)} 个旋律音段  ·  单音演奏  ·  {self.plan.folded} 个音段折回可演奏八度")
             self.elapsed.set(f"00:00 / {clock_label(self.plan.duration)}")
             self.progress["value"] = 0
             self.status.set("准备就绪")
@@ -392,7 +413,7 @@ class App:
             ("high", "鼠标右键偏移 / 半音", list(range(-24, 25))),
             ("half", "鼠标中键偏移 / 半音", [1, -1]),
             ("countdown", "开始倒计时 / 秒", list(range(2, 16))),
-            ("gate", "音符按住比例 / %", [50, 65, 75, 85, 90, 95, 98]),
+            ("gate", "原谱分音按住比例 / %", [50, 65, 75, 85, 90, 95, 98]),
             ("target", "目标窗口标题（用 | 分隔关键词）", None),
         ]
         variables = {}
@@ -402,7 +423,7 @@ class App:
             widget = ttk.Combobox(frame, textvariable=variable, values=values, state="readonly", width=26) if values else ttk.Entry(frame, textvariable=variable, width=29)
             widget.grid(row=row, column=1, sticky="ew", pady=7, padx=(15, 0))
         frame.columnconfigure(1, weight=1)
-        tk.Label(dialog, text="左／右键暂按 -12／+12 半音（低／高八度）；中键暂按 +1 半音。\n中央 1 的真实音高和鼠标效果，请用「音阶校准」曲在游戏内核对。\n只向倒计时结束时匹配的前台窗口演奏，切换窗口即停止。", bg=CARD, fg=MUTED, justify="left", font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=24, pady=17)
+        tk.Label(dialog, text="钢琴适配连奏使用完整时值，衔接处最多留 25 毫秒松键；不使用上方比例。\n左／右键暂按低／高八度，中键暂按 +1 半音，请用「音阶校准」核对。\n只向倒计时结束时匹配的前台窗口演奏，切换窗口即停止。", bg=CARD, fg=MUTED, justify="left", font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=24, pady=17)
 
         def save():
             try:
@@ -459,7 +480,8 @@ class App:
             countdown = 10
             self.game_test_pending = False
             self.log.info("本次为游戏内七音测试；10 秒倒计时；之后恢复普通演奏模式")
-        self.log.info("开始请求：%s；曲目=%s；音符=%s", self.playing_mode, self.song.title, len(self.plan.notes))
+        self.log.info("开始请求：%s；曲目=%s；音符=%s；方式=%s；音轨=%s；整理=%s；连接=%s", self.playing_mode,
+                      self.song.title, len(self.plan.notes), self.plan.style, self.plan.track, self.plan.cleaned, self.plan.bridged)
         self._set_busy(True)
         self.status.set("正在准备" if preview else "准备游戏演奏")
         self.detail.set("试听使用本机合成音色。" if preview else "倒计时结束后开始，请保持游戏内口风琴打开；F9 随时停止。")
@@ -619,11 +641,12 @@ def main():
                 assert app.settings["keys"][-1] == ","
                 assert app.play_button.winfo_ismapped()
                 assert app.footer.winfo_y()+app.footer.winfo_height() <= root.winfo_height()
+                assert app.footer.winfo_height() >= app.footer.winfo_reqheight()
                 midi_tested = 0
                 for _, source in app.entries:
                     if source[0] == "file" and source[1].suffix.lower() in (".mid", ".midi"):
                         imported = read_midi(source[1])
-                        assert compile_plan(imported, app.mapping()).notes
+                        assert compile_plan(imported, app.mapping(), track="auto", style="piano").notes
                         midi_tested += 1
                 Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": True, "notes": len(app.plan.notes), "midi_tested": midi_tested, "width": root.winfo_width(), "height": root.winfo_height()}), encoding="utf-8")
             except Exception as error:

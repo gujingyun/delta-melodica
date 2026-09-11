@@ -74,6 +74,10 @@ class Plan:
     duration: float
     folded: int
     source_count: int
+    style: str = "original"
+    cleaned: int = 0
+    bridged: int = 0
+    track: int | None = None
 
 
 def pitch_name(pitch: int) -> str:
@@ -209,6 +213,66 @@ def monophonic(notes: list[Note]) -> list[Note]:
     return result
 
 
+def recommend_track(song: Song) -> int:
+    """优先有旋律名称的音轨，否则从音符较充足的音轨中推荐高声部。"""
+    groups = defaultdict(list)
+    for note in song.notes:
+        groups[note.track].append(note)
+    largest = max(len(notes) for notes in groups.values())
+    candidates = [track for track, notes in groups.items() if len(notes) >= max(1, largest * 0.2)]
+
+    def score(track):
+        name = song.tracks.get(track, "").lower()
+        named = any(word in name for word in ("melody", "vocal", "lead", "主旋律", "人声"))
+        notes = groups[track]
+        weights = [min(n.end-n.start, 1.0) for n in notes]
+        return named, sum(n.pitch*w for n, w in zip(notes, weights))/sum(weights), -track
+
+    return max(candidates, key=score)
+
+
+def piano_melody(notes: list[Note]) -> list[Note]:
+    """整理钢琴高声部，避免伴奏尾音回填和和弦手指错位产生的碎音。"""
+    groups = []
+    for note in sorted(notes, key=lambda n: (n.start, n.pitch)):
+        # 只合并重叠长音的近同时起音；真正的快速短音、重复音仍保留。
+        if (groups and note.start-groups[-1][0].start <= 0.060
+                and note.pitch not in {n.pitch for n in groups[-1]}
+                and note.end-note.start >= 0.1
+                and all(n.end-n.start >= 0.1 and n.end > note.start for n in groups[-1])):
+            groups[-1].append(note)
+        else:
+            groups.append([note])
+    result = []
+    for group in groups:
+        note = max(group, key=lambda n: (n.pitch, n.start))
+        if result and note.start < result[-1].end:
+            previous = result[-1]
+            # 下行连奏允许少量重叠；持续高音下的新伴奏不打断旋律。
+            if note.pitch < previous.pitch and previous.end-note.start > 0.080:
+                continue
+            if (note.start <= previous.start or
+                    (note.start-previous.start < 0.040 and previous.end-previous.start >= 0.1)):
+                result.pop()
+            else:
+                result[-1] = Note(previous.start, note.start, previous.pitch, previous.track)
+        result.append(note)
+    return result
+
+
+def bridge_short_gaps(notes: list[Note]) -> tuple[list[Note], int]:
+    result, count = [], 0
+    for index, note in enumerate(notes):
+        if index+1 < len(notes):
+            gap = notes[index+1].start-note.end
+            # 仅连接短间隙，保留长休止和明显的短促奏法。
+            if 1e-8 < gap <= min(0.120, (note.end-note.start)*0.35):
+                note = Note(note.start, notes[index+1].start, note.pitch, note.track)
+                count += 1
+        result.append(note)
+    return result, count
+
+
 def fingerings(mapping: Mapping) -> dict[int, Fingering]:
     mapping.validate()
     result = {}
@@ -223,17 +287,27 @@ def fingerings(mapping: Mapping) -> dict[int, Fingering]:
     return result
 
 
-def compile_plan(song: Song, mapping: Mapping, track: int | None = None, speed: float = 1, transpose: int = 0) -> Plan:
+def compile_plan(song: Song, mapping: Mapping, track: int | str | None = None, speed: float = 1, transpose: int = 0, style: str = "original") -> Plan:
     if not math.isfinite(speed) or not 0.25 <= speed <= 2:
         raise ValueError("速度倍率需在 0.25～2.00 之间。")
     if not -24 <= transpose <= 24:
         raise ValueError("移调需在 -24～24 半音之间。")
+    if style not in ("original", "piano"):
+        raise ValueError("请选择原谱分音或钢琴适配连奏。")
+    if track == "auto":
+        track = recommend_track(song)
     lookup = fingerings(mapping)
     source = [n for n in song.notes if track is None or n.track == track]
     if not source:
         raise ValueError("所选音轨没有音符。")
+    melody = monophonic(source)
+    cleaned, bridged = 0, 0
+    if style == "piano":
+        adapted = piano_melody(source)
+        cleaned = max(0, len(melody)-len(adapted))
+        melody, bridged = bridge_short_gaps(adapted)
     result, folded = [], 0
-    for note in monophonic(source):
+    for note in melody:
         pitch = note.pitch + transpose
         fingering = lookup.get(pitch)
         if fingering is None:
@@ -243,7 +317,7 @@ def compile_plan(song: Song, mapping: Mapping, track: int | None = None, speed: 
             fingering = lookup[min(candidates, key=lambda p: (abs(p-pitch), p))]
             folded += 1
         result.append(PlayNote(note.start/speed, note.end/speed, pitch, fingering))
-    return Plan(result, song.duration/speed, folded, len(source))
+    return Plan(result, song.duration/speed, folded, len(source), style, cleaned, bridged, track)
 
 
 DEMO_SCORES = {
