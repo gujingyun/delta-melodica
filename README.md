@@ -141,3 +141,9 @@ python -m venv .venv
 MIDI 解析使用 [Mido](https://mido.readthedocs.io/en/stable/files/midi.html)，依赖许可证随发行包提供。
 
 额外的悬浮窗集成测试为 `python -m unittest -v test_overlay`。它只创建并点击本地测试窗口；建议在管理员终端运行，避免当前前台游戏的权限限制测试窗口切换焦点。
+
+## 开源许可与贡献
+
+本项目以 [MIT 许可证](LICENSE) 开源。第三方依赖遵循各自许可证，相关文本保存在 [`third_party`](third_party) 目录。
+
+参与开发前请阅读 [贡献指南](AGENTS.md)，了解模块职责、测试命令和提交约定。
