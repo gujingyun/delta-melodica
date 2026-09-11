@@ -119,12 +119,31 @@ def parse_jianpu(text: str, bpm: float = 100, title: str = "自定义简谱") ->
     return Song(title.strip() or "自定义简谱", notes, duration=cursor)
 
 
+def _decode_track_name(name: str) -> str:
+    """从无损 Latin-1 字符串恢复常见的 UTF-8 和中文 MIDI 音轨名。"""
+    raw = name.encode("latin1")
+    try:
+        return raw.decode("utf-8-sig").strip()
+    except UnicodeDecodeError:
+        pass
+    try:
+        decoded = raw.decode("gb18030")
+    except UnicodeDecodeError:
+        return name.strip()
+    chinese = sum("\u3400" <= char <= "\u9fff" or "\U00020000" <= char <= "\U000323af" for char in decoded)
+    # 单个西文重音字母也可能与后面的 ASCII 组成 GBK 字符，避免误改 Réverb 等名称。
+    if chinese and (sum(byte >= 0x80 for byte in raw) > chinese or any(0x80 <= byte <= 0x9f for byte in raw)):
+        return decoded.strip()
+    return name.strip()
+
+
 def read_midi(path: str | Path) -> Song:
     import mido
     path = Path(path)
     if path.stat().st_size > 10 * 1024 * 1024:
         raise ValueError("MIDI 文件不能超过 10 MB。")
-    midi = mido.MidiFile(path)
+    # 先按单字节编码无损读取，再逐条解码名称，兼容同一文件内混用编码。
+    midi = mido.MidiFile(path, charset="latin1")
     if midi.type == 2 or midi.ticks_per_beat <= 0:
         raise ValueError("请使用 PPQ 时间格式的 MIDI 0／1 型文件，不支持独立序列或 SMPTE 时间格式。")
     tempos, events, tracks, last_tick = [(0, -1, 500000)], [], {}, 0
@@ -136,8 +155,10 @@ def read_midi(path: str | Path) -> Song:
             if count > 200000:
                 raise ValueError("MIDI 事件过多，请先导出需要的旋律音轨。")
             tick += msg.time
-            if msg.type == "track_name" and msg.name.strip():
-                name = msg.name.strip()
+            if msg.type == "track_name":
+                decoded = _decode_track_name(msg.name)
+                if decoded:
+                    name = decoded
             if msg.type == "set_tempo":
                 if msg.tempo <= 0:
                     raise ValueError("MIDI 中包含无效速度。")

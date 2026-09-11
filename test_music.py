@@ -89,6 +89,51 @@ class MusicTests(unittest.TestCase):
                 read_midi(path)
 
 
+class TrackNameTests(unittest.TestCase):
+    def read_names(self, names):
+        midi = mido.MidiFile(charset="latin1")
+        for raw in names:
+            midi.tracks.append(mido.MidiTrack([
+                mido.MetaMessage("track_name", name=raw.decode("latin1")),
+                mido.Message("note_on", note=60, velocity=80),
+                mido.Message("note_off", note=60, time=480),
+            ]))
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder, "names.mid")
+            midi.save(path)
+            before = path.read_bytes()
+            song = read_midi(path)
+            self.assertEqual(path.read_bytes(), before, "读取音轨名不能改写 MIDI")
+        self.assertEqual(len(song.notes), len(names))
+        self.assertAlmostEqual(song.duration, 0.5)
+        return song
+
+    def test_chinese_track_names_in_common_encodings(self):
+        for name, encoding in (("主旋律 伴奏", "gbk"), ("钢琴", "gb2312"),
+                               ("口风琴", "utf-8"), ("人声", "utf-8-sig"),
+                               ("聲樂", "gb18030"), ("𠀀 音轨", "gb18030")):
+            with self.subTest(encoding=encoding, name=name):
+                self.assertEqual(self.read_names([name.encode(encoding)]).tracks, {0: name})
+
+    def test_mixed_track_encodings_and_melody_recommendation(self):
+        song = self.read_names(["伴奏".encode("utf-8"), "主旋律 伴奏".encode("gbk"), b"MIDI Out #2"])
+        self.assertEqual(song.tracks, {0: "伴奏", 1: "主旋律 伴奏", 2: "MIDI Out #2"})
+        self.assertEqual(recommend_track(song), 1)
+
+    def test_ascii_and_western_track_names_are_preserved(self):
+        names = ["MIDI Out", "Track 1", "Café", "Réverb", "Bäss Flöte"]
+        song = self.read_names([name.encode("latin1") for name in names])
+        self.assertEqual(list(song.tracks.values()), names)
+
+    def test_decode_before_trimming_multibyte_names(self):
+        # “你”的 UTF-8 尾字节为 A0，不能先当作 Latin-1 不换行空格去除。
+        self.assertEqual(self.read_names(["  你".encode("utf-8")]).tracks, {0: "你"})
+
+    def test_empty_or_unknown_names_keep_safe_fallback(self):
+        song = self.read_names([b" \t", b"\xffBroken"])
+        self.assertEqual(song.tracks, {0: "音轨 1", 1: "ÿBroken"})
+
+
 class PianoTests(unittest.TestCase):
     def test_accompaniment_tail_is_not_restarted(self):
         notes = [Note(0, 1.05, 48), Note(0, 1, 72), Note(1.1, 2, 74)]
