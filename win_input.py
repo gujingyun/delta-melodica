@@ -4,10 +4,16 @@ from __future__ import annotations
 import ctypes as ct
 from ctypes import wintypes as wt
 import os
+from pathlib import Path
+import subprocess
+import sys
 import threading
 
 user32 = ct.WinDLL("user32", use_last_error=True)
 winmm = ct.WinDLL("winmm", use_last_error=True)
+kernel32 = ct.WinDLL("kernel32", use_last_error=True)
+advapi32 = ct.WinDLL("advapi32", use_last_error=True)
+shell32 = ct.WinDLL("shell32", use_last_error=True)
 
 
 class MOUSEINPUT(ct.Structure):
@@ -44,6 +50,16 @@ user32.MapVirtualKeyW.restype = wt.UINT
 user32.RegisterHotKey.argtypes = (wt.HWND, ct.c_int, wt.UINT, wt.UINT)
 user32.UnregisterHotKey.argtypes = (wt.HWND, ct.c_int)
 user32.PeekMessageW.argtypes = (ct.POINTER(wt.MSG), wt.HWND, wt.UINT, wt.UINT, wt.UINT)
+user32.IsWindowVisible.argtypes = (wt.HWND,)
+WNDENUMPROC = ct.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
+user32.EnumWindows.argtypes = (WNDENUMPROC, wt.LPARAM)
+kernel32.OpenProcess.argtypes = (wt.DWORD, wt.BOOL, wt.DWORD)
+kernel32.OpenProcess.restype = wt.HANDLE
+kernel32.CloseHandle.argtypes = (wt.HANDLE,)
+advapi32.OpenProcessToken.argtypes = (wt.HANDLE, wt.DWORD, ct.POINTER(wt.HANDLE))
+advapi32.GetTokenInformation.argtypes = (wt.HANDLE, ct.c_int, wt.LPVOID, wt.DWORD, ct.POINTER(wt.DWORD))
+shell32.ShellExecuteW.argtypes = (wt.HWND, wt.LPCWSTR, wt.LPCWSTR, wt.LPCWSTR, wt.LPCWSTR, ct.c_int)
+shell32.ShellExecuteW.restype = ct.c_void_p
 winmm.midiOutOpen.argtypes = (ct.POINTER(ct.c_void_p), wt.UINT, ct.c_size_t, ct.c_size_t, wt.DWORD)
 winmm.midiOutShortMsg.argtypes = (ct.c_void_p, wt.DWORD)
 winmm.midiOutReset.argtypes = (ct.c_void_p,)
@@ -55,14 +71,67 @@ SCAN_CODES = {"z": 0x2C, "x": 0x2D, "c": 0x2E, "v": 0x2F, "b": 0x30,
 MOUSE_FLAGS = {"left": (0x0002, 0x0004), "right": (0x0008, 0x0010), "middle": (0x0020, 0x0040)}
 
 
-def foreground() -> tuple[int, int, str]:
-    hwnd = user32.GetForegroundWindow()
+def window_info(hwnd) -> tuple[int, int, str]:
     pid = wt.DWORD()
     user32.GetWindowThreadProcessId(hwnd, ct.byref(pid))
     size = user32.GetWindowTextLengthW(hwnd) + 1
     buffer = ct.create_unicode_buffer(max(1, size))
     user32.GetWindowTextW(hwnd, buffer, len(buffer))
     return hwnd or 0, pid.value, buffer.value
+
+
+def foreground() -> tuple[int, int, str]:
+    return window_info(user32.GetForegroundWindow())
+
+
+def matching_windows(keywords):
+    windows = []
+
+    @WNDENUMPROC
+    def collect(hwnd, unused):
+        if user32.IsWindowVisible(hwnd):
+            window = window_info(hwnd)
+            if target_matches(window, keywords):
+                windows.append(window)
+        return True
+
+    user32.EnumWindows(collect, 0)
+    return windows
+
+
+def process_elevated(pid=None) -> bool | None:
+    # 仅读取进程权限标志；无法查询时保留“未知”，不猜测游戏状态。
+    process = kernel32.OpenProcess(0x1000, False, os.getpid() if pid is None else pid)
+    if not process:
+        return None
+    token = wt.HANDLE()
+    try:
+        if not advapi32.OpenProcessToken(process, 0x0008, ct.byref(token)):
+            return None
+        value, size = wt.DWORD(), wt.DWORD()
+        if not advapi32.GetTokenInformation(token, 20, ct.byref(value), ct.sizeof(value), ct.byref(size)):
+            return None
+        return bool(value.value)
+    finally:
+        if token:
+            kernel32.CloseHandle(token)
+        kernel32.CloseHandle(process)
+
+
+def permission_problem(target_pid, query=process_elevated):
+    if query() is False and query(target_pid) is True:
+        return "游戏以管理员权限运行，助手当前是普通权限。请点击「以管理员身份重启」，在 Windows 弹窗中确认后再试。"
+    return None
+
+
+def restart_as_admin(data_dir):
+    # 用户点击按钮后才调用系统提权弹窗，取消时保持当前软件运行。
+    arguments = ["--data-dir", str(data_dir)]
+    if not getattr(sys, "frozen", False):
+        arguments.insert(0, str(Path(__file__).with_name("app.py")))
+    result = shell32.ShellExecuteW(None, "runas", sys.executable, subprocess.list2cmdline(arguments), str(Path(sys.executable).parent), 1)
+    if not result or result <= 32:
+        raise OSError("管理员启动被取消或失败，当前助手仍可使用；请重新点击按钮后在 Windows 弹窗中确认。")
 
 
 def target_matches(window: tuple[int, int, str], keywords: str) -> bool:
@@ -94,9 +163,11 @@ class WindowsOutput:
     @staticmethod
     def _native_send(events):
         array = (INPUT * len(events))(*events)
+        ct.set_last_error(0)
         sent = user32.SendInput(len(array), array, ct.sizeof(INPUT))
         if sent != len(array):
-            raise OSError(f"Windows 未完整接收模拟输入（{sent}/{len(array)}），请检查窗口权限。")
+            error = ct.get_last_error()
+            raise OSError(f"Windows 未接收模拟输入（{sent}/{len(array)}，错误码 {error}）。请确认助手和游戏的权限一致；可点击「以管理员身份重启」后再试。")
 
     def check(self):
         if self._foreground()[:2] != self.target[:2]:
@@ -162,24 +233,32 @@ class PreviewOutput:
 
 
 class Hotkeys:
-    def __init__(self, toggle, stop, report):
+    def __init__(self, toggle, stop, report, status=None):
         self.toggle, self.stop, self.report = toggle, stop, report
+        self.status = status or (lambda text: None)
         self.exit = threading.Event()
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
 
     def _run(self):
         registered = []
+        states = []
         try:
+            # 提前建立线程消息队列，热键消息始终在注册它的线程中读取。
+            message = wt.MSG()
+            user32.PeekMessageW(ct.byref(message), None, 0, 0, 0)
             for identity, vk, name in ((801, 0x77, "F8"), (802, 0x78, "F9")):
                 if user32.RegisterHotKey(None, identity, 0x4000, vk):
                     registered.append(identity)
+                    states.append(f"{name} 就绪")
                 else:
-                    self.report(f"{name} 被其他程序占用，请关闭占用程序后重启助手。")
-            message = wt.MSG()
+                    error = ct.get_last_error()
+                    states.append(f"{name} 不可用")
+                    self.report(f"{name} 注册失败（错误码 {error}），可能被旧版助手或其他程序占用。请关闭其他助手窗口后重启；也可用界面上的播放和停止按钮。")
+            self.status(" · ".join(states))
             while not self.exit.wait(0.015):
                 while user32.PeekMessageW(ct.byref(message), None, 0, 0, 1):
-                    if message.message == 0x0312:
+                    if message.message == 0x0312 and message.wParam in registered:
                         (self.toggle if message.wParam == 801 else self.stop)()
         finally:
             for identity in registered:

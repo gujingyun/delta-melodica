@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
 import queue
@@ -15,7 +17,8 @@ import uuid
 
 from music import DEMO_SCORES, Mapping, compile_plan, parse_jianpu, pitch_name, read_midi
 from player import Player
-from win_input import Hotkeys, PreviewOutput, WindowsOutput, foreground, target_matches
+from win_input import (Hotkeys, PreviewOutput, WindowsOutput, foreground, target_matches,
+                       matching_windows, process_elevated, permission_problem, restart_as_admin)
 
 BG = "#11191d"
 CARD = "#1b272d"
@@ -35,10 +38,19 @@ def clock_label(seconds):
 
 
 class App:
-    def __init__(self, root, data_dir, smoke=False):
+    def __init__(self, root, data_dir, smoke=False, game_test=False):
         self.root, self.data_dir, self.smoke = root, Path(data_dir), smoke
+        self.game_test_pending = game_test
         self.library_dir = self.data_dir / "songs"
         self.library_dir.mkdir(parents=True, exist_ok=True)
+        self.log = logging.getLogger(f"melodica.{id(self)}")
+        self.log.setLevel(logging.INFO)
+        self.log.propagate = False
+        self.log_handler = RotatingFileHandler(self.data_dir / "diagnostic.log", maxBytes=300000, backupCount=2, encoding="utf-8")
+        self.log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        self.log.addHandler(self.log_handler)
+        self.elevated = process_elevated()
+        self.log.info("启动 v0.2；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
         self.settings = DEFAULTS.copy()
         self.load_error = None
         try:
@@ -69,15 +81,21 @@ class App:
         self.detail = tk.StringVar(value="先试听，再进入游戏取出口风琴。")
         self.elapsed = tk.StringVar(value="00:00 / 00:00")
         self.stats = tk.StringVar(value="")
+        self.hotkey_status = tk.StringVar(value="热键正在初始化")
         self._build()
         self._load_library()
         self.hotkeys = None if smoke else Hotkeys(
             lambda: self.events.put(("toggle", None)),
-            self.stop,
+            lambda: self.stop("F9"),
             lambda text: self.events.put(("warning", text)),
+            lambda text: self.events.put(("hotkeys", text)),
         )
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.after(40, self._poll)
+        if not smoke:
+            self.root.after(300, self.check_permissions)
+        if game_test:
+            self.root.after(1000, lambda: self.play(False))
         if self.load_error:
             self.detail.set(self.load_error)
 
@@ -86,9 +104,9 @@ class App:
 
     def _build(self):
         root = self.root
-        root.title("口风琴助手 · MIDI 自动演奏")
-        root.geometry("1120x820")
-        root.minsize(1000, 800)
+        root.title("口风琴助手 v0.2 · MIDI 自动演奏")
+        root.geometry("1120x850")
+        root.minsize(1000, 830)
         root.configure(bg=BG)
         root.option_add("*Font", ("Microsoft YaHei UI", 10))
         style = ttk.Style()
@@ -115,7 +133,11 @@ class App:
         settings = ttk.Button(header, text="键位与设置", command=self.settings_dialog)
         settings.pack(side="right")
         self.locked_widgets.append(settings)
-        tk.Label(header, text="本地运行  ·  v0.1", fg=ACCENT, bg=BG).pack(side="right", padx=22)
+        if self.elevated is not True:
+            self.admin_button = ttk.Button(header, text="以管理员身份重启", command=self.elevate)
+            self.admin_button.pack(side="right", padx=(0, 12))
+            self.locked_widgets.append(self.admin_button)
+        tk.Label(header, text="v0.2 · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
 
         body = tk.Frame(root, bg=BG)
         body.pack(fill="both", expand=True, padx=28)
@@ -189,9 +211,46 @@ class App:
         status_card.pack(fill="x", pady=(13, 0))
         tk.Label(status_card, textvariable=self.status, bg=BG, fg=ACCENT, anchor="w", font=("Microsoft YaHei UI", 11, "bold")).pack(fill="x")
         tk.Label(status_card, textvariable=self.detail, bg=BG, fg=MUTED, anchor="w", justify="left", wraplength=670, font=("Microsoft YaHei UI", 9)).pack(fill="x", pady=(4, 0))
+        bottom = tk.Frame(root, bg=BG)
+        bottom.pack(fill="x", padx=28, pady=(10, 0))
+        tk.Label(bottom, textvariable=self.hotkey_status, bg=BG, fg=MUTED, font=("Microsoft YaHei UI", 9)).pack(side="left")
+        log_button = tk.Label(bottom, text="查看诊断日志", bg=BG, fg=ACCENT, cursor="hand2", font=("Microsoft YaHei UI", 9))
+        log_button.pack(side="right")
+        log_button.bind("<Button-1>", lambda event: self.show_log())
         self.footer = tk.Label(root, text="操作：选曲 → 试听 → 游戏内取出口风琴 → 按 F8 开始　｜　F9 随时停止 · 切出目标窗口自动停止",
                  bg=BG, fg=MUTED, font=("Microsoft YaHei UI", 9))
-        self.footer.pack(anchor="w", padx=28, pady=(12, 14))
+        self.footer.pack(anchor="w", padx=28, pady=(5, 10))
+
+    def check_permissions(self):
+        for window in matching_windows(self.settings["target"]):
+            problem = permission_problem(window[1])
+            self.log.info("检测游戏：标题=%s；PID=%s；管理员权限=%s", window[2], window[1], process_elevated(window[1]))
+            if problem:
+                self.status.set("需要与游戏使用相同权限")
+                self.detail.set(problem)
+                return
+
+    def elevate(self):
+        if self.busy:
+            return
+        try:
+            self.log.info("用户请求以管理员身份重新启动")
+            restart_as_admin(self.data_dir)
+        except OSError as error:
+            self.log.warning("管理员启动失败：%s", error)
+            self.detail.set(str(error))
+            return
+        self.close()
+
+    def show_log(self):
+        self.log_handler.flush()
+        dialog = self._dialog("诊断日志", "820x520")
+        tk.Label(dialog, text="包含热键、权限、目标窗口和输入失败记录。", bg=CARD, fg=MUTED).pack(anchor="w", padx=18, pady=14)
+        viewer = tk.Text(dialog, bg=DEEP, fg=TEXT, wrap="word", bd=0, padx=12, pady=12)
+        viewer.pack(fill="both", expand=True, padx=18, pady=(0, 18))
+        viewer.insert("1.0", (self.data_dir / "diagnostic.log").read_text(encoding="utf-8")[-20000:])
+        viewer.configure(state="disabled")
+        viewer.see("end")
 
     def _load_library(self, select_path=None):
         self.entries = [(name, ("demo", name)) for name in DEMO_SCORES]
@@ -369,29 +428,45 @@ class App:
 
     def play(self, preview=False):
         if self.busy or self.player.active or self.root.grab_current():
+            self.log.info("启动请求未执行：忙碌=%s；播放器=%s；弹窗=%s", self.busy, self.player.active, bool(self.root.grab_current()))
             return
         self.rebuild_plan()
         if not self.plan:
+            self.log.warning("启动请求未执行：没有有效乐谱")
             return
         settings = self.settings.copy()
 
         def game_output():
             window = foreground()
+            self.log.info("倒计时结束：前台标题=%s；HWND=%s；PID=%s；游戏管理员权限=%s", window[2], window[0], window[1], process_elevated(window[1]))
             if not target_matches(window, settings["target"]):
                 raise RuntimeError(f"前台不是目标游戏（当前：{window[2] or '无标题'}）。请进入游戏，或在设置中修正窗口关键词。")
+            problem = permission_problem(window[1])
+            if problem:
+                raise RuntimeError(problem)
             return WindowsOutput(window)
         self.started_at = None
         self.playing_mode = "本机试听" if preview else "游戏演奏"
+        countdown = 0 if preview else settings["countdown"]
+        if not preview and self.game_test_pending:
+            from music import Plan
+            notes = self.plan.notes[:7]
+            self.plan = Plan(notes, notes[-1].end, 0, len(notes))
+            countdown = 10
+            self.game_test_pending = False
+            self.log.info("本次为游戏内七音测试；10 秒倒计时；之后恢复普通演奏模式")
+        self.log.info("开始请求：%s；曲目=%s；音符=%s", self.playing_mode, self.song.title, len(self.plan.notes))
         self._set_busy(True)
         self.status.set("正在准备" if preview else "请切回游戏，取出口风琴")
         self.detail.set("试听使用本机合成音色。" if preview else "倒计时结束后开始。确认角色已进入口风琴演奏状态；F9 随时停止。")
         try:
-            self.player.start(self.plan, PreviewOutput if preview else game_output, 0 if preview else settings["countdown"], settings["gate"] / 100)
+            self.player.start(self.plan, PreviewOutput if preview else game_output, countdown, settings["gate"] / 100)
         except Exception as error:
             self._set_busy(False)
             self.detail.set(str(error))
 
-    def stop(self):
+    def stop(self, source="停止按钮"):
+        self.log.info("停止请求：%s", source)
         self.player.stop()
 
     def _poll(self):
@@ -401,12 +476,18 @@ class App:
             while True:
                 kind, value = self.events.get_nowait()
                 if kind == "toggle":
-                    self.stop() if self.busy else self.play(False)
+                    self.log.info("收到 F8 热键；当前忙碌=%s", self.busy)
+                    self.stop("F8") if self.busy else self.play(False)
                 elif kind == "warning":
+                    self.log.warning(value)
                     self.detail.set(value)
+                elif kind == "hotkeys":
+                    self.hotkey_status.set(value)
+                    self.log.info("热键状态：%s", value)
                 elif kind == "countdown":
                     self.status.set(f"{value} 秒后开始 · 请切回游戏")
                 elif kind == "started":
+                    self.log.info("已开始：%s", self.playing_mode)
                     self.started_at = time.perf_counter()
                     self.status.set(self.playing_mode + "中")
                 elif kind == "note":
@@ -419,6 +500,7 @@ class App:
                     self.draw_keys()
                 elif kind == "done":
                     status, error = value
+                    self.log.info("播放结束：%s；错误=%s", status, error)
                     elapsed = min(self.plan.duration, time.perf_counter()-self.started_at) if self.started_at else 0
                     if status == "演奏完成" and not error:
                         elapsed = self.plan.duration
@@ -490,6 +572,9 @@ class App:
         self.player.close()
         if self.hotkeys:
             self.hotkeys.close()
+        self.log.info("关闭助手")
+        self.log.removeHandler(self.log_handler)
+        self.log_handler.close()
         self.root.destroy()
 
 
@@ -497,6 +582,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", default=str(Path(os.environ.get("LOCALAPPDATA", str(Path.cwd()))) / "DeltaMelodica"))
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--game-test", action="store_true", help="10 秒后向目标游戏播放小星星开头七音，仅执行一次")
     args = parser.parse_args()
     try:
         import ctypes
@@ -504,7 +590,7 @@ def main():
     except Exception:
         pass
     root = tk.Tk()
-    app = App(root, args.data_dir, args.smoke)
+    app = App(root, args.data_dir, args.smoke, args.game_test)
     smoke_exit = 0
     if args.smoke:
         def verify():

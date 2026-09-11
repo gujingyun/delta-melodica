@@ -11,7 +11,7 @@ import unittest
 import mido
 from music import Mapping, Note, Song, compile_plan, fingerings, monophonic, parse_jianpu, read_midi
 from player import Player
-from win_input import INPUT, WindowsOutput, keyboard_event, target_matches
+from win_input import INPUT, WindowsOutput, keyboard_event, target_matches, permission_problem, process_elevated
 
 
 class MusicTests(unittest.TestCase):
@@ -89,6 +89,18 @@ class MusicTests(unittest.TestCase):
 
 
 class InputTests(unittest.TestCase):
+    def test_elevated_game_requires_matching_permission(self):
+        self.assertIn("管理员", permission_problem(123, query=lambda pid=None: pid == 123))
+        self.assertIsNone(permission_problem(123, query=lambda pid=None: True))
+        self.assertIsNone(permission_problem(123, query=lambda pid=None: False))
+
+    def test_unknown_permission_is_not_reported_as_confirmed_mismatch(self):
+        self.assertIsNone(permission_problem(123, query=lambda pid=None: None))
+        self.assertIsNone(permission_problem(123, query=lambda pid=None: False if pid is None else None))
+
+    def test_own_permission_query_succeeds(self):
+        self.assertIsInstance(process_elevated(), bool)
+
     def test_windows_structure_and_comma_scancode(self):
         self.assertEqual(ctypes.sizeof(INPUT), 40 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28)
         self.assertEqual(keyboard_event(",", True).ki.wScan, 0x33)
