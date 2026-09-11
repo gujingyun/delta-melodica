@@ -40,6 +40,7 @@ class Overlay:
         self.window = tk.Toplevel(app.root)
         self.window.withdraw()
         self.window.title("三角洲口风琴 · 游戏悬浮窗")
+        self.window.protocol("WM_DELETE_WINDOW", self.disable)
         self.window.overrideredirect(True)
         self.window.attributes("-topmost", True)
         self.window.attributes("-alpha", self.alpha)
@@ -71,11 +72,13 @@ class Overlay:
             self.hwnd = root_window(self.window.winfo_id())
             overlay_style(self.hwnd, self.editing)
             self.visible = True
+            self.app.overlay_visibility_changed(True)
 
     def _hide(self):
         if self.visible:
             self.window.withdraw()
             self.visible = False
+            self.app.overlay_visibility_changed(False)
 
     def game_window(self):
         current = foreground()
@@ -140,6 +143,21 @@ class Overlay:
         else:
             self.begin_edit()
 
+    def toggle_visibility(self):
+        if self.closed:
+            return
+        if self.visible:
+            self.disable()
+        elif target_matches(foreground(), self.app.settings["target"]):
+            # 游戏内只切换观看窗，保持焦点和正在进行的演奏。
+            self.enabled, self.editing = True, False
+            self.window.geometry(f"{self.WIDTH}x{self.HUD_HEIGHT}+{self.x}+{self.y}")
+            self._show()
+            self.draw()
+            self.save()
+        else:
+            self.begin_edit()
+
     def toggle_play(self):
         if self.app.busy:
             self.app.stop("F8")
@@ -195,7 +213,7 @@ class Overlay:
             c.create_rectangle(x, 119, x+45, 147, fill=ACCENT if active else CARD, outline="")
             self._text(x+22, 133, key.upper(), BG if active else TEXT, 11, True, "center")
         if not self.editing:
-            text = self.app.current_note.fingering.label if self.app.current_note else "F7 操作　F8 播放 / 停止　F9 停止"
+            text = self.app.current_note.fingering.label if self.app.current_note else "F6 隐藏　F7 操作　F8 播放 / 停止　F9 停止"
             self._text(16, 168, text, MUTED, 9)
             return
         ready = not self.app.busy
@@ -219,7 +237,7 @@ class Overlay:
         self._button(330, 363, 94, 29, f"不透明 {round(self.alpha*100)}%", self.change_alpha)
         self._button(16, 402, 128, 31, "打开主窗口", self.open_main)
         self._button(156, 402, 128, 31, "隐藏悬浮窗", self.disable)
-        self._text(422, 418, "F7 再次打开", MUTED, 9, anchor="e")
+        self._text(422, 418, "F6 显示 / 隐藏", MUTED, 9, anchor="e")
 
     def select(self, index):
         if self.app.busy:
@@ -249,17 +267,20 @@ class Overlay:
         self.draw()
 
     def open_main(self):
-        self.app.stop("打开主窗口")
-        self.editing = False
-        self._hide()
-        self.app.root.deiconify()
-        activate_window(window_info(root_window(self.app.root.winfo_id())))
+        self.app.show_main()
 
     def disable(self):
-        self.return_to_game()
+        return_focus = self.editing and foreground()[0] == self.hwnd
         self.editing, self.enabled = False, False
+        overlay_style(self.hwnd, False)
         self._hide()
         self.save()
+        if return_focus:
+            try:
+                activate_window(self.game_window())
+            except RuntimeError:
+                # 桌面中也允许独立开关面板，不要求游戏必须存在。
+                pass
 
     def _press(self, event):
         if self.editing and event.y < 38:

@@ -10,9 +10,10 @@ import tempfile
 import time
 import tkinter as tk
 import unittest
+from unittest.mock import patch
 
 from app import App
-from win_input import (WindowsOutput, activate_window, foreground, mouse_event,
+from win_input import (Hotkeys, INPUT, WindowsOutput, activate_window, foreground, mouse_event,
                        root_window, window_info, _get_window_long, user32)
 
 FIXTURE = r'''
@@ -29,7 +30,7 @@ canvas.create_text(650, 300, text="本地悬浮窗测试\n\n检查焦点与鼠�
 root.update()
 Path(sys.argv[1]).write_text(json.dumps(window_info(root_window(root.winfo_id()))), encoding="utf-8")
 root.bind("<ButtonPress-1>", lambda e: Path(sys.argv[2]).write_text("clicked", encoding="utf-8"))
-root.after(20000, root.destroy)
+root.after(60000, root.destroy)
 root.mainloop()
 '''
 
@@ -153,6 +154,80 @@ class OverlayTests(unittest.TestCase):
         self.pump()
         self.assertFalse(self.overlay.visible)
         self.root.withdraw()
+
+    def test_07_close_main_keeps_real_f6_hotkey_and_f7_panel(self):
+        states = []
+        hotkeys = Hotkeys(lambda: None, lambda: None, lambda text: None, states.append,
+                          visibility=lambda: self.app.events.put(("overlay_visibility", None)))
+        try:
+            deadline = time.monotonic()+3
+            while not states and time.monotonic() < deadline:
+                self.pump(0.03)
+            self.assertTrue(states and "F6 就绪" in states[0], "测试前请关闭其他注册 F6 的程序")
+            self.root.tk.call(self.root.protocol("WM_DELETE_WINDOW"))
+            self.assertEqual(self.root.state(), "withdrawn")
+            self.assertFalse(self.app.closing)
+            # 真实注册的全局热键由 Windows 分发，只在自建靶窗口前发送。
+            for visible in (False, True):
+                self.assertEqual(foreground()[:2], self.target[:2])
+                down, up = INPUT(type=1), INPUT(type=1)
+                down.ki.wVk = up.ki.wVk = 0x75
+                up.ki.dwFlags = 2
+                WindowsOutput._native_send([down, up])
+                self.pump(0.3)
+                self.assertEqual(self.overlay.visible, visible)
+                self.assertEqual(foreground()[:2], self.target[:2])
+                self.assertEqual(self.root.state(), "withdrawn")
+                saved = json.loads(self.overlay.config_path.read_text(encoding="utf-8"))
+                self.assertEqual(saved["enabled"], visible)
+            self.app.events.put(("overlay", None))
+            self.pump()
+            self.assertTrue(self.overlay.editing)
+            self.assertTrue(self.overlay.visible)
+            self.assertEqual(self.root.state(), "withdrawn")
+            self.overlay.return_to_game()
+        finally:
+            hotkeys.close()
+        self.assertFalse(hotkeys.thread.is_alive())
+        self.assertTrue(user32.RegisterHotKey(None, 904, 0x4000, 0x75), "退出后应释放 F6")
+        user32.UnregisterHotKey(None, 904)
+
+    def test_08_desktop_toggle_does_not_require_a_game(self):
+        original = self.app.settings["target"]
+        try:
+            self.app.settings["target"] = "不存在的悬浮窗测试游戏"
+            self.overlay.target = None
+            self.root.deiconify()
+            self.root.update()
+            activate_window(window_info(root_window(self.root.winfo_id())))
+            self.pump()
+            self.app.hide_main()
+            self.app.events.put(("overlay_visibility", None))
+            self.pump()
+            self.assertTrue(self.overlay.visible)
+            self.assertTrue(self.overlay.editing)
+            self.app.events.put(("overlay_visibility", None))
+            self.pump()
+            self.assertFalse(self.overlay.visible)
+            self.assertFalse(self.overlay.enabled)
+            self.assertFalse(self.overlay.editing)
+            self.assertNotEqual(self.app.status.get(), "请先进入游戏")
+        finally:
+            self.app.settings["target"] = original
+
+    def test_09_hud_visibility_does_not_stop_playback(self):
+        with patch.object(self.app, "stop") as stop:
+            self.app.busy = True
+            try:
+                self.overlay.toggle_visibility()
+                self.assertFalse(self.overlay.visible)
+                self.overlay.toggle_visibility()
+                self.assertTrue(self.overlay.visible)
+                self.assertFalse(self.overlay.editing)
+                self.assertEqual(foreground()[:2], self.target[:2])
+                stop.assert_not_called()
+            finally:
+                self.app.busy = False
 
 
 if __name__ == "__main__":

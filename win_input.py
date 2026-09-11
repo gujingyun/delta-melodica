@@ -277,10 +277,11 @@ class PreviewOutput:
 
 
 class Hotkeys:
-    def __init__(self, toggle, stop, report, status=None, overlay=None):
+    def __init__(self, toggle, stop, report, status=None, overlay=None, visibility=None):
         self.toggle, self.stop, self.report = toggle, stop, report
         self.status = status or (lambda text: None)
         self.overlay = overlay
+        self.visibility = visibility
         self.exit = threading.Event()
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
@@ -295,6 +296,8 @@ class Hotkeys:
             bindings = [(801, 0x77, "F8"), (802, 0x78, "F9")]
             if self.overlay:
                 bindings.insert(0, (803, 0x76, "F7"))
+            if self.visibility:
+                bindings.insert(0, (804, 0x75, "F6"))
             for identity, vk, name in bindings:
                 if user32.RegisterHotKey(None, identity, 0x4000, vk):
                     registered.append(identity)
@@ -307,7 +310,7 @@ class Hotkeys:
             while not self.exit.wait(0.015):
                 while user32.PeekMessageW(ct.byref(message), None, 0, 0, 1):
                     if message.message == 0x0312 and message.wParam in registered:
-                        {801: self.toggle, 802: self.stop, 803: self.overlay}[message.wParam]()
+                        {801: self.toggle, 802: self.stop, 803: self.overlay, 804: self.visibility}[message.wParam]()
         finally:
             for identity in registered:
                 user32.UnregisterHotKey(None, identity)

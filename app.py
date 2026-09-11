@@ -18,8 +18,10 @@ import uuid
 from music import DEMO_SCORES, Mapping, compile_plan, parse_jianpu, pitch_name, read_midi, recommend_track
 from player import Player
 from overlay import Overlay
+from tray import Tray
 from win_input import (Hotkeys, PreviewOutput, WindowsOutput, foreground, target_matches,
-                       matching_windows, process_elevated, permission_problem, restart_as_admin)
+                       matching_windows, process_elevated, permission_problem, restart_as_admin,
+                       activate_window, window_info, root_window)
 
 BG = "#11191d"
 CARD = "#1b272d"
@@ -52,7 +54,7 @@ class App:
         self.log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         self.log.addHandler(self.log_handler)
         self.elevated = process_elevated()
-        self.log.info("启动 三角洲口风琴 v0.4；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
+        self.log.info("启动 三角洲口风琴 v0.5；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
         self.settings = DEFAULTS.copy()
         self.load_error = None
         try:
@@ -85,18 +87,26 @@ class App:
         self.elapsed = tk.StringVar(value="00:00 / 00:00")
         self.stats = tk.StringVar(value="")
         self.hotkey_status = tk.StringVar(value="热键正在初始化")
+        self.overlay_button_text = tk.StringVar(value="显示悬浮窗  F6")
         self._build()
         self._load_library()
         self.overlay = Overlay(self)
+        self.tray = None
+        if not smoke:
+            try:
+                self.tray = Tray(lambda kind, value: self.events.put((kind, value)))
+            except Exception as error:
+                self.events.put(("tray_error", str(error)))
         self.hotkeys = None if smoke else Hotkeys(
             lambda: self.events.put(("toggle", None)),
             lambda: self.stop("F9"),
             lambda text: self.events.put(("warning", text)),
             lambda text: self.events.put(("hotkeys", text)),
             lambda: self.events.put(("overlay", None)),
+            lambda: self.events.put(("overlay_visibility", None)),
         )
-        self.root.protocol("WM_DELETE_WINDOW", self.close)
-        self.root.after(40, self._poll)
+        self.root.protocol("WM_DELETE_WINDOW", self.hide_main)
+        self.poll_timer = self.root.after(40, self._poll)
         if not smoke:
             self.root.after(300, self.check_permissions)
         if game_test:
@@ -109,7 +119,7 @@ class App:
 
     def _build(self):
         root = self.root
-        root.title("三角洲口风琴 v0.4 · MIDI 自动演奏")
+        root.title("三角洲口风琴 v0.5 · MIDI 自动演奏")
         root.geometry("1120x850")
         root.minsize(1000, 830)
         root.configure(bg=BG)
@@ -138,12 +148,12 @@ class App:
         settings = ttk.Button(header, text="键位与设置", command=self.settings_dialog)
         settings.pack(side="right")
         self.locked_widgets.append(settings)
-        ttk.Button(header, text="游戏悬浮窗  F7", command=lambda: self.overlay.begin_edit()).pack(side="right", padx=(0, 12))
+        ttk.Button(header, text="悬浮窗操作  F7", command=lambda: self.overlay.begin_edit()).pack(side="right", padx=(0, 12))
         if self.elevated is not True:
             self.admin_button = ttk.Button(header, text="以管理员身份重启", command=self.elevate)
             self.admin_button.pack(side="right", padx=(0, 12))
             self.locked_widgets.append(self.admin_button)
-        tk.Label(header, text="v0.4 · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
+        tk.Label(header, text="v0.5 · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
 
         body = tk.Frame(root, bg=BG)
         body.pack(fill="both", expand=True, padx=28)
@@ -231,10 +241,14 @@ class App:
         bottom = tk.Frame(root, bg=BG)
         bottom.pack(fill="x", padx=28, pady=(10, 0))
         tk.Label(bottom, textvariable=self.hotkey_status, bg=BG, fg=MUTED, font=("Microsoft YaHei UI", 9)).pack(side="left")
+        self.overlay_button = ttk.Button(bottom, textvariable=self.overlay_button_text,
+                                         command=lambda: self.overlay.toggle_visibility(), padding=(8, 3))
+        self.overlay_button.pack(side="left", padx=12)
+        self.exit_button = ttk.Button(bottom, text="退出程序", command=self.close, padding=(8, 3))
         log_button = tk.Label(bottom, text="查看诊断日志", bg=BG, fg=ACCENT, cursor="hand2", font=("Microsoft YaHei UI", 9))
         log_button.pack(side="right")
         log_button.bind("<Button-1>", lambda event: self.show_log())
-        self.footer = tk.Label(root, text="游戏内：F7 操作悬浮窗　F8 播放 / 停止　F9 紧急停止　｜　悬浮窗建议配合无边框窗口模式",
+        self.footer = tk.Label(root, text="F6 显示 / 隐藏悬浮窗　F7 操作　F8 播放 / 停止　F9 停止　｜　关闭主窗口后继续运行，右下角托盘退出",
                  bg=BG, fg=MUTED, font=("Microsoft YaHei UI", 9))
         self.footer.pack(anchor="w", padx=28, pady=(5, 10))
 
@@ -507,6 +521,24 @@ class App:
                 elif kind == "overlay":
                     self.log.info("收到 F7 悬浮窗热键")
                     self.overlay.toggle_edit()
+                elif kind == "overlay_visibility":
+                    self.log.info("切换悬浮窗显示 / 隐藏")
+                    self.overlay.toggle_visibility()
+                elif kind == "show_main":
+                    self.show_main()
+                elif kind == "stop":
+                    self.stop("系统托盘")
+                elif kind == "exit":
+                    self.close()
+                    return
+                elif kind == "tray_ready":
+                    self.log.info("系统托盘已就绪")
+                elif kind == "tray_error":
+                    self.log.error("系统托盘不可用：%s", value)
+                    self.show_main()
+                    self.status.set("系统托盘不可用")
+                    self.detail.set("暂时保留主窗口，请用下方“退出程序”结束运行。" + value)
+                    self.exit_button.pack(side="right", padx=12)
                 elif kind == "warning":
                     self.log.warning(value)
                     self.detail.set(value)
@@ -549,7 +581,7 @@ class App:
             self.elapsed.set(f"{clock_label(elapsed)} / {clock_label(self.plan.duration)}")
             self.progress["value"] = elapsed/max(self.plan.duration, 0.01)*100
             self.draw_roll(elapsed)
-        self.root.after(40, self._poll)
+        self.poll_timer = self.root.after(40, self._poll)
 
     def draw_keys(self):
         canvas = self.keys_canvas
@@ -596,12 +628,50 @@ class App:
         cursor = 40+(elapsed-left)/span*(width-45)
         canvas.create_line(cursor, 0, cursor, height, fill=ORANGE, width=2)
 
+    def overlay_visibility_changed(self, visible):
+        self.overlay_button_text.set(("隐藏" if visible else "显示") + "悬浮窗  F6")
+
+    def hide_main(self):
+        if self.closing:
+            return
+        # 只有托盘可用时才隐藏，防止用户失去恢复窗口和退出的入口。
+        if not self.smoke and (not self.tray or not self.tray.available):
+            self.detail.set("系统托盘尚未就绪，暂时保留主窗口。")
+            return
+        dialog = self.root.grab_current()
+        if dialog:
+            dialog.lift()
+            return
+        self.root.withdraw()
+        self.log.info("隐藏主窗口，后台和 F6 / F7 / F8 / F9 热键继续运行")
+
+    def show_main(self):
+        if self.closing:
+            return
+        self.stop("打开主窗口")
+        self.overlay.editing = False
+        self.overlay._hide()
+        self.root.deiconify()
+        self.root.update_idletasks()
+        self.root.lift()
+        try:
+            dialog = self.root.grab_current()
+            target = dialog if dialog else self.root
+            activate_window(window_info(root_window(target.winfo_id())))
+        except RuntimeError as error:
+            self.detail.set(str(error))
+
     def close(self):
+        if self.closing:
+            return
         self.closing = True
+        self.root.after_cancel(self.poll_timer)
         self.player.close()
         self.overlay.close()
         if self.hotkeys:
             self.hotkeys.close()
+        if self.tray:
+            self.tray.close()
         self.log.info("关闭助手")
         self.log.removeHandler(self.log_handler)
         self.log_handler.close()
@@ -633,6 +703,7 @@ def main():
     app = App(root, args.data_dir, args.smoke, args.game_test)
     smoke_exit = 0
     if args.smoke:
+        app.tray = Tray(lambda kind, value: app.events.put((kind, value)))
         def verify():
             nonlocal smoke_exit
             try:
@@ -642,13 +713,19 @@ def main():
                 assert app.play_button.winfo_ismapped()
                 assert app.footer.winfo_y()+app.footer.winfo_height() <= root.winfo_height()
                 assert app.footer.winfo_height() >= app.footer.winfo_reqheight()
+                assert app.tray.available, "系统托盘未就绪"
+                assert app.overlay_button.winfo_ismapped()
+                app.hide_main()
+                assert root.state() == "withdrawn" and not app.closing
+                app.show_main()
+                assert root.state() == "normal"
                 midi_tested = 0
                 for _, source in app.entries:
                     if source[0] == "file" and source[1].suffix.lower() in (".mid", ".midi"):
                         imported = read_midi(source[1])
                         assert compile_plan(imported, app.mapping(), track="auto", style="piano").notes
                         midi_tested += 1
-                Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": True, "notes": len(app.plan.notes), "midi_tested": midi_tested, "width": root.winfo_width(), "height": root.winfo_height()}), encoding="utf-8")
+                Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": True, "notes": len(app.plan.notes), "midi_tested": midi_tested, "width": root.winfo_width(), "height": root.winfo_height(), "tray": True, "hide_restore": True}), encoding="utf-8")
             except Exception as error:
                 smoke_exit = 1
                 Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": False, "error": str(error)}), encoding="utf-8")
