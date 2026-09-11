@@ -70,6 +70,16 @@ class App:
             pass
         except (ValueError, TypeError, AttributeError, OSError) as error:
             self.load_error = f"设置读取失败，已使用默认值：{error}"
+        self.song_preferences = {}
+        try:
+            saved = json.loads((self.data_dir / "song-settings.json").read_text(encoding="utf-8"))
+            if not isinstance(saved, dict):
+                raise ValueError("曲目设置格式不正确")
+            self.song_preferences = saved
+        except FileNotFoundError:
+            pass
+        except (ValueError, OSError) as error:
+            self.load_error = f"曲目设置读取失败，已使用默认值：{error}"
         self.events = queue.Queue()
         self.player = Player(lambda run_id, kind, value: self.events.put(("player", (run_id, kind, value))))
         self.song, self.plan, self.current_source = None, None, None
@@ -349,7 +359,8 @@ class App:
             self.track_combo.current(0)
             is_midi = source[0] == "file" and source[1].suffix.lower() in (".mid", ".midi")
             self.arrangement.set("钢琴适配 · 连奏" if is_midi else "原谱 · 分音")
-            self.rebuild_plan()
+            self.restore_song_preferences()
+            self.rebuild_plan(save_preferences=False)
         except Exception as error:
             self.song, self.plan = None, None
             self.title.set("曲目读取失败")
@@ -358,7 +369,50 @@ class App:
             self.draw_roll()
             messagebox.showerror("无法读取曲目", str(error), parent=self.root)
 
-    def rebuild_plan(self, preserve_position=False):
+    def song_preference_key(self):
+        kind, value = self.current_source
+        # 导入文件名含独立编号，同名曲目不会互相覆盖，也不依赖数据目录的位置。
+        return f"{kind}:{value.name if kind == 'file' else value}"
+
+    def restore_song_preferences(self):
+        self.speed.set("1.00")
+        self.transpose.set("0")
+        saved = self.song_preferences.get(self.song_preference_key(), {})
+        if not isinstance(saved, dict):
+            return
+        speed = saved.get("speed")
+        if type(speed) in (int, float) and speed in [float(value) for value in SPEEDS]:
+            self.speed.set(f"{speed:.2f}")
+        transpose = saved.get("transpose")
+        if type(transpose) is int and -24 <= transpose <= 24:
+            self.transpose.set(str(transpose))
+        track = saved.get("track", "auto")
+        if (track is None or track == "auto" or type(track) is int) and track in self.track_ids:
+            self.track_combo.current(self.track_ids.index(track))
+        style = saved.get("style")
+        for label, value in PLAY_STYLES.items():
+            if style == value:
+                self.arrangement.set(label)
+
+    def save_song_preferences(self):
+        if not self.current_source:
+            return
+        candidate = self.song_preferences.copy()
+        candidate[self.song_preference_key()] = {
+            "speed": float(self.speed.get()), "transpose": int(self.transpose.get()),
+            "track": self.track_ids[self.track_combo.current()], "style": PLAY_STYLES[self.arrangement.get()],
+        }
+        destination = self.data_dir / "song-settings.json"
+        try:
+            temporary = destination.with_suffix(".tmp")
+            temporary.write_text(json.dumps(candidate, ensure_ascii=False, indent=2), encoding="utf-8")
+            temporary.replace(destination)
+            self.song_preferences = candidate
+        except OSError as error:
+            self.log.warning("曲目设置保存失败：%s", error)
+            self.detail.set(f"本次调整已生效，但曲目设置未保存：{error}")
+
+    def rebuild_plan(self, preserve_position=False, save_preferences=True):
         if not self.song or (self.busy and not preserve_position):
             return
         try:
@@ -385,6 +439,8 @@ class App:
             self._update_progress()
             self.draw_keys()
             self._update_play_buttons()
+            if save_preferences:
+                self.save_song_preferences()
         except (ValueError, IndexError) as error:
             if preserve_position:
                 self.speed.set(self.plan_parameters[0])
