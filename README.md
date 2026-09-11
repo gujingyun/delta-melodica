@@ -1,5 +1,7 @@
 # 三角洲口风琴 v0.10
 
+官网与最新版下载：<https://aiygzn.top/melodica/>
+
 Windows 本地 MIDI／简谱自动演奏工具，按三角洲行动口风琴的八个音键设计。
 
 ## 开始使用
