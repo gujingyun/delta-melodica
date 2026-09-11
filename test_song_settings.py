@@ -4,12 +4,13 @@ import json
 from pathlib import Path
 import tempfile
 import tkinter as tk
+from tkinter import ttk
 import unittest
 from unittest.mock import patch
 
 import mido
 
-from app import App
+from app import App, parse_clock, precise_clock_label
 
 
 class SongSettingsTests(unittest.TestCase):
@@ -119,6 +120,99 @@ class SongSettingsTests(unittest.TestCase):
         self.assertEqual(self.app.plan.notes[0].source_pitch, 61)
         self.assertEqual(path.read_bytes(), original)
         self.assertIn("曲目设置未保存", self.app.detail.get())
+
+    def test_segments_persist_in_original_time_and_clear_only_current_song(self):
+        first = [(4.25, 7.5), (0, 2)]
+        self.app.rebuild_plan(segments=first)
+        self.app.change_speed(3)
+        self.select(1)
+        self.assertEqual(self.app.segments, [])
+        self.app.rebuild_plan(segments=[(2, 4)])
+        self.restart()
+        self.assertEqual(self.app.segments, first)
+        self.assertEqual(self.app.speed.get(), "2.00")
+        self.assertEqual(self.app.plan.duration, 2.625)
+        self.app.rebuild_plan(segments=[])
+        self.assertEqual(self.app.plan.duration, self.app.song.duration/2)
+        self.select(1)
+        self.assertEqual(self.app.segments, [(2, 4)])
+        self.restart()
+        self.assertEqual(self.app.segments, [])
+
+    def test_outdated_segments_fall_back_to_full_song_with_warning(self):
+        self.app.rebuild_plan(segments=[(1, 2)])
+        path = Path(self.folder.name, "song-settings.json")
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data[self.app.song_preference_key()]["segments"] = [[1, 9999]]
+        path.write_text(json.dumps(data), encoding="utf-8")
+        self.restart()
+        self.assertEqual(self.app.segments, [])
+        self.assertTrue(self.app.plan.notes)
+        self.assertIn("已保存的片段不可用", self.app.detail.get())
+
+    def test_time_entry_accepts_minutes_or_seconds_and_rejects_bad_values(self):
+        for value in ("01:23.500", "83.5", "1：23.5"):
+            self.assertEqual(parse_clock(value), 83.5)
+        self.assertEqual(precise_clock_label(83.5008), "01:23.500")
+        for value in ("nan", "inf", "-1", "1:60", "1:2:3", "", "1.2345"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                parse_clock(value)
+
+    def dialog_widgets(self, dialog):
+        def descendants(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from descendants(child)
+        widgets = list(descendants(dialog))
+        return ([widget for widget in widgets if isinstance(widget, ttk.Entry)],
+                next(widget for widget in widgets if isinstance(widget, ttk.Treeview)),
+                {str(widget["text"]): widget for widget in widgets if isinstance(widget, ttk.Button)})
+
+    def test_dialog_add_reorder_update_remove_and_save(self):
+        dialog = self.app.segments_dialog()
+        self.root.update()
+        entries, table, buttons = self.dialog_widgets(dialog)
+
+        def fill(start, end):
+            for entry, value in zip(entries, (start, end)):
+                entry.delete(0, "end")
+                entry.insert(0, value)
+
+        fill("1", "3")
+        buttons["添加到列表"].invoke()
+        self.root.update()
+        fill("8", "10")
+        buttons["添加到列表"].invoke()
+        self.root.update()
+        buttons["上移"].invoke()
+        self.root.update()
+        self.assertEqual(table.item("0", "values")[1], "00:08.000")
+        fill("9", "11")
+        buttons["更新选中"].invoke()
+        self.root.update()
+        buttons["保存片段"].invoke()
+        self.assertEqual(self.app.segments, [(9, 11), (1, 3)])
+        self.assertEqual(self.app.plan.duration, 4)
+        dialog = self.app.segments_dialog()
+        self.root.update()
+        _, table, buttons = self.dialog_widgets(dialog)
+        table.selection_set("0")
+        buttons["删除"].invoke()
+        buttons["保存片段"].invoke()
+        self.assertEqual(self.app.segments, [(1, 3)])
+
+    def test_dialog_cancel_keeps_saved_ranges_and_invalid_input_keeps_list(self):
+        self.app.rebuild_plan(segments=[(1, 3)])
+        dialog = self.app.segments_dialog()
+        self.root.update()
+        entries, table, buttons = self.dialog_widgets(dialog)
+        entries[0].delete(0, "end")
+        entries[0].insert(0, "nan")
+        buttons["添加到列表"].invoke()
+        self.assertEqual(len(table.get_children()), 1)
+        buttons["清空 / 全曲"].invoke()
+        buttons["取消"].invoke()
+        self.assertEqual(self.app.segments, [(1, 3)])
 
 
 if __name__ == "__main__":

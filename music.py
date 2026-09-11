@@ -308,13 +308,42 @@ def fingerings(mapping: Mapping) -> dict[int, Fingering]:
     return result
 
 
-def compile_plan(song: Song, mapping: Mapping, track: int | str | None = None, speed: float = 1, transpose: int = 0, style: str = "original") -> Plan:
+def validate_segments(segments, duration):
+    """片段按原曲秒数保存，空列表表示全曲，保留用户编排的先后顺序。"""
+    if not isinstance(segments, (list, tuple)) or len(segments) > 100:
+        raise ValueError("每首曲目最多支持 100 个片段。")
+    result = []
+    for index, segment in enumerate(segments, 1):
+        if not isinstance(segment, (list, tuple)) or len(segment) != 2:
+            raise ValueError(f"第 {index} 个片段需要起点和终点。")
+        start, end = segment
+        if not all(type(value) in (int, float) and math.isfinite(value) for value in (start, end)):
+            raise ValueError(f"第 {index} 个片段的时间必须是有效数字。")
+        if not 0 <= start < end <= duration:
+            raise ValueError(f"第 {index} 个片段需满足 0 ≤ 起点 < 终点 ≤ 原曲时长。")
+        result.append((float(start), float(end)))
+    return result
+
+
+def segment_source_position(position, segments, duration):
+    """把原速的拼接进度还原为原曲位置；片段交界处属于下一片段。"""
+    remaining = max(0.0, position)
+    for start, end in segments:
+        length = end-start
+        if remaining < length:
+            return start+remaining
+        remaining -= length
+    return segments[-1][1] if segments else min(duration, remaining)
+
+
+def compile_plan(song: Song, mapping: Mapping, track: int | str | None = None, speed: float = 1, transpose: int = 0, style: str = "original", segments=None) -> Plan:
     if not math.isfinite(speed) or not 0.25 <= speed <= 2:
         raise ValueError("速度倍率需在 0.25～2.00 之间。")
     if not -24 <= transpose <= 24:
         raise ValueError("移调需在 -24～24 半音之间。")
     if style not in ("original", "piano"):
         raise ValueError("请选择原谱分音或钢琴适配连奏。")
+    segments = validate_segments([] if segments is None else segments, song.duration)
     if track == "auto":
         track = recommend_track(song)
     lookup = fingerings(mapping)
@@ -327,6 +356,20 @@ def compile_plan(song: Song, mapping: Mapping, track: int | str | None = None, s
         adapted = piano_melody(source)
         cleaned = max(0, len(melody)-len(adapted))
         melody, bridged = bridge_short_gaps(adapted)
+    duration, source_count = song.duration, len(source)
+    if segments:
+        selected, duration, source_count = [], 0.0, 0
+        # 先整理完整旋律再裁切，片段起点不会让已被过滤的伴奏重新发声。
+        for start, end in segments:
+            for note in melody:
+                if note.start < end and note.end > start:
+                    selected.append(Note(duration+max(note.start, start)-start,
+                                         duration+min(note.end, end)-start, note.pitch, note.track))
+            source_count += sum(note.start < end and note.end > start for note in source)
+            duration += end-start
+        melody = selected
+        if not melody:
+            raise ValueError("所选片段在当前音轨和演奏方式下没有可演奏的音符，请调整范围或音轨。")
     result, folded = [], 0
     for note in melody:
         pitch = note.pitch + transpose
@@ -338,7 +381,7 @@ def compile_plan(song: Song, mapping: Mapping, track: int | str | None = None, s
             fingering = lookup[min(candidates, key=lambda p: (abs(p-pitch), p))]
             folded += 1
         result.append(PlayNote(note.start/speed, note.end/speed, pitch, fingering))
-    return Plan(result, song.duration/speed, folded, len(source), style, cleaned, bridged, track)
+    return Plan(result, duration/speed, folded, source_count, style, cleaned, bridged, track)
 
 
 DEMO_SCORES = {

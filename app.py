@@ -8,13 +8,15 @@ from logging.handlers import RotatingFileHandler
 import os
 from pathlib import Path
 import queue
+import re
 import shutil
 import sys
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import uuid
 
-from music import DEMO_SCORES, Mapping, compile_plan, parse_jianpu, pitch_name, read_midi, recommend_track
+from music import (DEMO_SCORES, Mapping, compile_plan, parse_jianpu, pitch_name, read_midi,
+                   recommend_track, validate_segments, segment_source_position)
 from player import Player
 from overlay import Overlay
 from tray import Tray
@@ -41,6 +43,25 @@ def clock_label(seconds):
     return f"{int(max(0, seconds)) // 60:02d}:{int(max(0, seconds)) % 60:02d}"
 
 
+def precise_clock_label(seconds):
+    # 向下取到毫秒，原曲末尾含小数时也不会显示越界时间。
+    milliseconds = int(max(0, seconds)*1000)
+    return f"{milliseconds // 60000:02d}:{milliseconds // 1000 % 60:02d}.{milliseconds % 1000:03d}"
+
+
+def parse_clock(text):
+    value = text.strip().replace("：", ":")
+    if not re.fullmatch(r"(?:\d+:)?\d+(?:\.\d{1,3})?", value):
+        raise ValueError("时间请填写 分:秒（如 01:23.500）或秒数（如 83.5），最多三位小数。")
+    parts = value.split(":")
+    seconds = float(parts[-1])
+    if len(parts) == 2:
+        if seconds >= 60:
+            raise ValueError("分:秒格式中的秒数必须小于 60。")
+        seconds += int(parts[0])*60
+    return seconds
+
+
 class App:
     def __init__(self, root, data_dir, smoke=False, game_test=False):
         self.root, self.data_dir, self.smoke = root, Path(data_dir), smoke
@@ -54,7 +75,7 @@ class App:
         self.log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         self.log.addHandler(self.log_handler)
         self.elevated = process_elevated()
-        self.log.info("启动 三角洲口风琴 v0.7；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
+        self.log.info("启动 三角洲口风琴 v0.8；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
         self.settings = DEFAULTS.copy()
         self.load_error = None
         try:
@@ -94,6 +115,9 @@ class App:
         self.plan_parameters = ("1.00", "0")
         self.arrangement = tk.StringVar(value="原谱 · 分音")
         self.track = tk.StringVar()
+        self.segments = []
+        self.segment_summary = tk.StringVar(value="全曲 · 参数按曲目自动保存")
+        self.preview_title = tk.StringVar(value="旋律预览")
         self.title = tk.StringVar(value="选择一首音乐")
         self.subtitle = tk.StringVar(value="从曲库开始，或导入你的 MIDI")
         self.status = tk.StringVar(value="准备就绪")
@@ -135,7 +159,7 @@ class App:
 
     def _build(self):
         root = self.root
-        root.title("三角洲口风琴 v0.7 · MIDI 自动演奏")
+        root.title("三角洲口风琴 v0.8 · MIDI 自动演奏")
         root.geometry("1120x850")
         root.minsize(1000, 830)
         root.configure(bg=BG)
@@ -169,7 +193,7 @@ class App:
             self.admin_button = ttk.Button(header, text="以管理员身份重启", command=self.elevate)
             self.admin_button.pack(side="right", padx=(0, 12))
             self.locked_widgets.append(self.admin_button)
-        tk.Label(header, text="v0.7 · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
+        tk.Label(header, text="v0.8 · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
 
         body = tk.Frame(root, bg=BG)
         body.pack(fill="both", expand=True, padx=28)
@@ -232,11 +256,20 @@ class App:
         tk.Label(adaptation, text="连奏：整理伴奏碎音，连接短间隙", bg=CARD, fg=MUTED,
                  font=("Microsoft YaHei UI", 9)).pack(side="left", padx=(14, 0))
 
+        segments = tk.Frame(track_card, bg=CARD)
+        segments.pack(fill="x", padx=22, pady=(0, 10))
+        tk.Label(segments, text="演出片段", bg=CARD, fg=MUTED).pack(side="left", padx=(0, 12))
+        self.segment_button = ttk.Button(segments, text="设置片段…", command=self.segments_dialog, padding=(10, 5))
+        self.segment_button.pack(side="right")
+        self.locked_widgets.append(self.segment_button)
+        tk.Label(segments, textvariable=self.segment_summary, bg=CARD, fg=ACCENT,
+                 font=("Microsoft YaHei UI", 9), anchor="w").pack(side="left", fill="x", expand=True)
+
         score_card = tk.Frame(content, bg=CARD)
         score_card.pack(fill="both", expand=True, pady=(16, 0))
         score_top = tk.Frame(score_card, bg=CARD)
-        score_top.pack(fill="x", padx=22, pady=(17, 8))
-        tk.Label(score_top, text="旋律预览", bg=CARD, fg=TEXT, font=("Microsoft YaHei UI", 12, "bold")).pack(side="left")
+        score_top.pack(fill="x", padx=22, pady=(12, 6))
+        tk.Label(score_top, textvariable=self.preview_title, bg=CARD, fg=TEXT, font=("Microsoft YaHei UI", 12, "bold")).pack(side="left")
         tk.Label(score_top, textvariable=self.elapsed, bg=CARD, fg=MUTED, font=("Consolas", 11)).pack(side="right")
         self.roll = tk.Canvas(score_card, bg=DEEP, highlightthickness=0, height=70)
         self.roll.pack(fill="both", expand=True, padx=22)
@@ -251,13 +284,17 @@ class App:
             self.progress.bind(f"<{key}>", lambda event, step=step: self._seek_key(step))
         self.progress.bind("<Home>", lambda event: self._seek_key(to_end=False))
         self.progress.bind("<End>", lambda event: self._seek_key(to_end=True))
-        tk.Label(score_card, textvariable=self.stats, bg=CARD, fg=MUTED, font=("Microsoft YaHei UI", 9), anchor="w").pack(fill="x", padx=22)
+        stats_label = tk.Label(score_card, textvariable=self.stats, bg=CARD, fg=MUTED, font=("Microsoft YaHei UI", 9), anchor="w")
+        stats_label.pack(fill="x", padx=22)
         self.keys_canvas = tk.Canvas(score_card, height=73, bg=CARD, highlightthickness=0)
-        self.keys_canvas.pack(fill="x", padx=22, pady=(8, 10))
+        self.keys_canvas.pack(fill="x", padx=22, pady=(4, 6))
         self.keys_canvas.bind("<Configure>", lambda event: self.draw_keys())
+        self.keys_canvas.pack_configure(side="bottom", before=self.roll)
+        stats_label.pack_configure(side="bottom", before=self.roll)
+        self.progress.pack_configure(side="bottom", before=self.roll)
 
         controls = tk.Frame(content, bg=BG)
-        controls.pack(fill="x", pady=(17, 0))
+        controls.pack(fill="x", pady=(12, 0))
         self.preview_button = ttk.Button(controls, text="▷  本机试听", command=lambda: self.toggle_play(True))
         self.preview_button.pack(side="left", padx=(0, 10))
         self.play_button = ttk.Button(controls, text="▶  游戏演奏  F8", style="Accent.TButton", command=lambda: self.toggle_play(False))
@@ -265,7 +302,7 @@ class App:
         self.stop_button = ttk.Button(controls, text="■  停止  F9", command=self.stop)
         self.stop_button.pack(side="right")
         status_card = tk.Frame(content, bg=BG)
-        status_card.pack(fill="x", pady=(13, 0))
+        status_card.pack(fill="x", pady=(10, 0))
         tk.Label(status_card, textvariable=self.status, bg=BG, fg=ACCENT, anchor="w", font=("Microsoft YaHei UI", 11, "bold")).pack(fill="x")
         tk.Label(status_card, textvariable=self.detail, bg=BG, fg=MUTED, anchor="w", justify="left", wraplength=670, font=("Microsoft YaHei UI", 9)).pack(fill="x", pady=(4, 0))
         bottom = tk.Frame(root, bg=BG)
@@ -281,6 +318,11 @@ class App:
         self.footer = tk.Label(root, text="F4/F5 音调 −/+　F10/F11 速度 −/+　F6 显隐　F7 操作　F8 暂停/继续　F9 停止归零　｜　关闭后从托盘退出",
                  bg=BG, fg=MUTED, justify="left", font=("Microsoft YaHei UI", 9))
         self.footer.pack(anchor="w", padx=28, pady=(5, 10))
+        # 先为底部操作与提示留出空间，窗口变小时由旋律画布缩小。
+        self.footer.pack_configure(side="bottom", before=body)
+        bottom.pack_configure(side="bottom", before=body)
+        status_card.pack_configure(side="bottom", before=score_card)
+        controls.pack_configure(side="bottom", before=score_card)
 
     def check_permissions(self):
         for window in matching_windows(self.settings["target"]):
@@ -359,8 +401,10 @@ class App:
             self.track_combo.current(0)
             is_midi = source[0] == "file" and source[1].suffix.lower() in (".mid", ".midi")
             self.arrangement.set("钢琴适配 · 连奏" if is_midi else "原谱 · 分音")
-            self.restore_song_preferences()
+            preference_warning = self.restore_song_preferences()
             self.rebuild_plan(save_preferences=False)
+            if preference_warning:
+                self.detail.set(preference_warning)
         except Exception as error:
             self.song, self.plan = None, None
             self.title.set("曲目读取失败")
@@ -377,6 +421,8 @@ class App:
     def restore_song_preferences(self):
         self.speed.set("1.00")
         self.transpose.set("0")
+        self.segments = []
+        warning = None
         saved = self.song_preferences.get(self.song_preference_key(), {})
         if not isinstance(saved, dict):
             return
@@ -393,6 +439,11 @@ class App:
         for label, value in PLAY_STYLES.items():
             if style == value:
                 self.arrangement.set(label)
+        try:
+            self.segments = validate_segments(saved.get("segments", []), self.song.duration)
+        except ValueError as error:
+            warning = f"已保存的片段不可用，暂用全曲：{error}"
+        return warning
 
     def save_song_preferences(self):
         if not self.current_source:
@@ -401,6 +452,7 @@ class App:
         candidate[self.song_preference_key()] = {
             "speed": float(self.speed.get()), "transpose": int(self.transpose.get()),
             "track": self.track_ids[self.track_combo.current()], "style": PLAY_STYLES[self.arrangement.get()],
+            "segments": self.segments,
         }
         destination = self.data_dir / "song-settings.json"
         try:
@@ -412,12 +464,13 @@ class App:
             self.log.warning("曲目设置保存失败：%s", error)
             self.detail.set(f"本次调整已生效，但曲目设置未保存：{error}")
 
-    def rebuild_plan(self, preserve_position=False, save_preferences=True):
+    def rebuild_plan(self, preserve_position=False, save_preferences=True, segments=None):
         if not self.song or (self.busy and not preserve_position):
-            return
+            return False
         try:
+            selected_segments = self.segments if segments is None else validate_segments(segments, self.song.duration)
             plan = compile_plan(self.song, self.mapping(), self.track_ids[self.track_combo.current()],
-                                float(self.speed.get()), int(self.transpose.get()), PLAY_STYLES[self.arrangement.get()])
+                                float(self.speed.get()), int(self.transpose.get()), PLAY_STYLES[self.arrangement.get()], selected_segments)
             if preserve_position and self.restore_plan_after_test:
                 # 专用七音测试改参数后仍只演奏原来的七音。
                 plan.notes = plan.notes[:len(self.plan.notes)]
@@ -430,25 +483,162 @@ class App:
                 self.detail.set("先试听，再进入游戏取出口风琴。按 F8 开始，F9 停止。")
             self.player.update_plan(plan)
             self.plan = plan
+            self.segments = selected_segments
             self.plan_parameters = (self.speed.get(), self.transpose.get())
             self.current_note = None
             if self.plan.style == "piano":
-                self.stats.set(f"{len(self.plan.notes)} 个旋律音  ·  整理 {self.plan.cleaned} 个音段  ·  连接 {self.plan.bridged} 处间隙  ·  {self.plan.folded} 个音折回八度")
+                scope = "全曲" if self.segments else ""
+                self.stats.set(f"{len(self.plan.notes)} 个旋律音  ·  {scope}整理 {self.plan.cleaned} 个音段  ·  {scope}连接 {self.plan.bridged} 处间隙  ·  {self.plan.folded} 个音折回八度")
             else:
                 self.stats.set(f"{len(self.plan.notes)} 个旋律音段  ·  单音演奏  ·  {self.plan.folded} 个音段折回可演奏八度")
             self._update_progress()
+            self.segment_summary.set(f"{len(self.segments)} 个片段 · 按列表顺序 · 自动保存" if self.segments else "全曲 · 参数按曲目自动保存")
+            self.preview_title.set("片段预览 · 拼接进度" if self.segments else "旋律预览")
             self.draw_keys()
             self._update_play_buttons()
             if save_preferences:
                 self.save_song_preferences()
+            return True
         except (ValueError, IndexError) as error:
             if preserve_position:
                 self.speed.set(self.plan_parameters[0])
                 self.transpose.set(self.plan_parameters[1])
-            else:
+            elif segments is None:
                 self.plan = None
                 self.status.set("请检查设置")
             self.detail.set(str(error))
+            return False
+
+    def original_position(self):
+        if not self.song:
+            return 0.0
+        return segment_source_position(self.player.position*float(self.speed.get()), self.segments, self.song.duration)
+
+    def segments_dialog(self):
+        if self.busy or not self.song:
+            return
+        dialog = self._dialog("设置演出片段", "720x620")
+        dialog.minsize(680, 600)
+        draft = list(self.segments)
+        position = self.original_position()
+        tk.Label(dialog, text="按顺序演奏你选的片段", bg=CARD, fg=TEXT,
+                 font=("Microsoft YaHei UI", 16, "bold")).pack(anchor="w", padx=22, pady=(18, 6))
+        tk.Label(dialog, text=f"原曲时长 {precise_clock_label(self.song.duration)}　·　当前原曲位置 {precise_clock_label(position)}\n"
+                 "填写起止时间 → 添加到列表 → 保存片段。时间按原曲 1 倍速计算。",
+                 bg=CARD, fg=MUTED, justify="left").pack(anchor="w", padx=22, pady=(0, 12))
+        start_value = tk.StringVar(value=precise_clock_label(position))
+        end_value = tk.StringVar(value=precise_clock_label(min(self.song.duration, position+10)))
+        fields = tk.Frame(dialog, bg=CARD)
+        fields.pack(fill="x", padx=22)
+        for row, (label, variable) in enumerate((("起点", start_value), ("终点", end_value))):
+            tk.Label(fields, text=label, bg=CARD, fg=MUTED).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=4)
+            ttk.Entry(fields, textvariable=variable, width=18).grid(row=row, column=1, sticky="ew", pady=4)
+            ttk.Button(fields, text="使用当前位置", padding=(10, 5),
+                       command=lambda variable=variable: variable.set(precise_clock_label(position))).grid(row=row, column=2, padx=(12, 0))
+        fields.columnconfigure(1, weight=1)
+        tk.Label(dialog, text="支持 01:23.500 或 83.5 秒；片段可重复，也可调整顺序。",
+                 bg=CARD, fg=MUTED, font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=22, pady=(5, 8))
+        style = ttk.Style()
+        style.configure("Segments.Treeview", background=DEEP, fieldbackground=DEEP, foreground=TEXT,
+                        rowheight=28, borderwidth=0)
+        style.configure("Segments.Treeview.Heading", background=LINE, foreground=TEXT)
+        style.map("Segments.Treeview", background=[("selected", "#354a38")], foreground=[("selected", ACCENT)])
+        table_frame = tk.Frame(dialog, bg=CARD)
+        table_frame.pack(fill="both", expand=True, padx=22)
+        table = ttk.Treeview(table_frame, columns=("order", "start", "end", "duration"),
+                             show="headings", selectmode="browse", height=5, style="Segments.Treeview")
+        for column, label, width in (("order", "顺序", 60), ("start", "原曲起点", 160),
+                                     ("end", "原曲终点", 160), ("duration", "原速时长", 140)):
+            table.heading(column, text=label)
+            table.column(column, width=width, anchor="center", stretch=column != "order")
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=table.yview)
+        table.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        table.pack(side="left", fill="both", expand=True)
+        error_text = tk.StringVar()
+        summary = tk.StringVar()
+        editor_footer = tk.Frame(dialog, bg=CARD)
+        editor_footer.pack(side="bottom", fill="x", before=table_frame)
+
+        def refresh(selected=None):
+            table.delete(*table.get_children())
+            for index, (start, end) in enumerate(draft):
+                table.insert("", "end", iid=str(index), values=(index+1, precise_clock_label(start),
+                             precise_clock_label(end), precise_clock_label(end-start)))
+            if selected is not None and draft:
+                item = str(min(selected, len(draft)-1))
+                table.selection_set(item)
+                table.see(item)
+            summary.set(f"{len(draft)} 个片段 · 当前速度下共 {precise_clock_label(sum(end-start for start, end in draft)/float(self.speed.get()))}"
+                        if draft else "列表为空：播放全曲")
+            error_text.set("")
+
+        def selected_index():
+            selection = table.selection()
+            return int(selection[0]) if selection else None
+
+        def select(event=None):
+            index = selected_index()
+            if index is not None:
+                start_value.set(precise_clock_label(draft[index][0]))
+                end_value.set(precise_clock_label(draft[index][1]))
+
+        def edit(replace=False):
+            try:
+                segment = validate_segments([(parse_clock(start_value.get()), parse_clock(end_value.get()))], self.song.duration)[0]
+                index = selected_index() if replace else len(draft)
+                if index is None:
+                    raise ValueError("请先选择要更新的片段。")
+                candidate = list(draft)
+                if replace:
+                    candidate[index] = segment
+                else:
+                    candidate.append(segment)
+                validate_segments(candidate, self.song.duration)
+                draft[:] = candidate
+                refresh(index)
+            except (ValueError, OverflowError) as error:
+                error_text.set(str(error))
+
+        def remove():
+            index = selected_index()
+            if index is not None:
+                draft.pop(index)
+                refresh(index)
+
+        def move(step):
+            index = selected_index()
+            if index is not None and 0 <= index+step < len(draft):
+                draft[index], draft[index+step] = draft[index+step], draft[index]
+                refresh(index+step)
+
+        def clear():
+            draft.clear()
+            refresh()
+
+        def save():
+            if self.rebuild_plan(segments=draft):
+                dialog.destroy()
+            else:
+                error_text.set(self.detail.get())
+
+        table.bind("<<TreeviewSelect>>", select)
+        actions = tk.Frame(editor_footer, bg=CARD)
+        actions.pack(fill="x", padx=22, pady=(10, 5))
+        for label, command in (("添加到列表", edit), ("更新选中", lambda: edit(True)), ("删除", remove),
+                               ("上移", lambda: move(-1)), ("下移", lambda: move(1)), ("清空 / 全曲", clear)):
+            ttk.Button(actions, text=label, command=command, width=0, padding=(10, 6)).pack(side="left", padx=(0, 6))
+        tk.Label(editor_footer, textvariable=summary, bg=CARD, fg=ACCENT).pack(anchor="w", padx=22, pady=(5, 0))
+        tk.Label(editor_footer, text="播放时跳过未选部分，进度条显示拼接后的时间。保存后回到片段开头。",
+                 bg=CARD, fg=MUTED, font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=22, pady=(5, 0))
+        tk.Label(editor_footer, textvariable=error_text, bg=CARD, fg=ORANGE, anchor="w", wraplength=630,
+                 font=("Microsoft YaHei UI", 9)).pack(fill="x", padx=22, pady=(5, 0))
+        buttons = tk.Frame(editor_footer, bg=CARD)
+        buttons.pack(fill="x", padx=22, pady=(8, 18))
+        ttk.Button(buttons, text="保存片段", command=save, style="Accent.TButton").pack(side="right")
+        ttk.Button(buttons, text="取消", command=dialog.destroy).pack(side="right", padx=10)
+        refresh()
+        return dialog
 
     def change_speed(self, step):
         current = min(range(len(SPEEDS)), key=lambda i: abs(float(SPEEDS[i])-float(self.speed.get())))
@@ -632,7 +822,8 @@ class App:
         self.log.info("开始请求：%s；曲目=%s；音符=%s；方式=%s；音轨=%s；整理=%s；连接=%s", self.playing_mode,
                       self.song.title, len(self.plan.notes), self.plan.style, self.plan.track, self.plan.cleaned, self.plan.bridged)
         self.status.set("正在准备" if preview else "准备游戏演奏")
-        self.detail.set(f"从 {clock_label(start_at)} 开始。" + ("试听使用本机合成音色。" if preview else "请保持游戏内口风琴打开；F8 暂停，F9 停止归零。"))
+        timeline = "片段拼接进度 " if self.segments else ""
+        self.detail.set(f"从{timeline} {clock_label(start_at)} 开始。" + ("试听使用本机合成音色。" if preview else "请保持游戏内口风琴打开；F8 暂停，F9 停止归零。"))
         try:
             self.player.start(self.plan, PreviewOutput if preview else game_output, countdown, settings["gate"] / 100, start_at=start_at)
             self._set_busy(True)
@@ -668,7 +859,7 @@ class App:
         self._update_progress()
         self.draw_keys()
         self.status.set("定位至 " + clock_label(self.player.position))
-        self.detail.set("松开进度后按 F8 从此处继续；F9 停止并回到曲首。")
+        self.detail.set("松开进度后按 F8 从此处继续；F9 停止并回到" + ("首个片段。" if self.segments else "曲首。"))
 
     def end_seek(self):
         self.seeking = False
@@ -740,8 +931,9 @@ class App:
                 elif kind == "stop_ui":
                     if value == (self.player.run_id, self.transport_revision):
                         self.pending_play, self.seeking, self.current_note = None, False, None
-                        self.status.set("已停止 · 回到曲首")
-                        self.detail.set("按 F8 从曲首播放，或拖动进度选择位置。")
+                        beginning = "首个片段" if self.segments else "曲首"
+                        self.status.set("已停止 · 回到" + beginning)
+                        self.detail.set(f"按 F8 从{beginning}播放，或拖动进度选择位置。")
                         self._set_busy(self.player.active)
                         self._update_progress()
                         self.draw_keys()
@@ -783,7 +975,8 @@ class App:
                     self.current_note = None
                     self._set_busy(False)
                     self.status.set("已暂停，请检查提示" if error else "已暂停" if self.player.paused else status)
-                    self.detail.set(error or ("按 F8 从当前位置继续，或拖动进度定位。" if self.player.paused else "按 F8 从曲首播放，或拖动进度选择位置。"))
+                    beginning = "首个片段" if self.segments else "曲首"
+                    self.detail.set(error or ("按 F8 从当前位置继续，或拖动进度定位。" if self.player.paused else f"按 F8 从{beginning}播放，或拖动进度选择位置。"))
                     self.draw_keys()
                     self._update_progress()
         except queue.Empty:
@@ -812,7 +1005,7 @@ class App:
     def draw_roll(self, elapsed=None):
         canvas = self.roll
         canvas.delete("all")
-        width, height = max(canvas.winfo_width(), 200), max(canvas.winfo_height(), 80)
+        width, height = max(canvas.winfo_width(), 200), max(canvas.winfo_height(), 30)
         if not self.plan:
             return
         if elapsed is None:

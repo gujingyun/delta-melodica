@@ -246,6 +246,46 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(self.app.player.position, position)
         self.assertEqual(float(self.app.progress["value"]), 50)
 
+    def test_segments_seek_resume_adjust_and_f9_keep_selected_ranges(self):
+        segments = [(1, 3), (10, 12)]
+        self.assertTrue(self.app.rebuild_plan(segments=segments))
+        self.assertEqual(self.app.plan.duration, 4)
+        self.app.begin_seek()
+        self.app.seek_fraction(0.75)
+        self.app.end_seek()
+        self.assertEqual(self.app.original_position(), 11)
+        self.app.change_speed(3)
+        self.app.change_transpose(1)
+        self.assertEqual(self.app.original_position(), 11)
+        self.assertEqual(self.app.plan.duration, 2)
+        self.app.play(True)
+        self.wait_playing()
+        self.assertEqual(self.outputs[0].pitches[0], 65)
+        self.assertEqual(str(self.app.segment_button["state"]), "disabled")
+        self.app.pause()
+        self.pump(lambda: not self.app.busy)
+        self.app.play(True)
+        self.wait_playing(2)
+        self.app.stop("F9")
+        self.pump(lambda: not self.app.busy and self.app.player.position == 0)
+        self.assertEqual(self.app.segments, segments)
+        self.assertEqual(self.app.original_position(), 1)
+        self.assertTrue(self.outputs[-1].closed)
+        self.app.play(True)
+        self.wait_playing(3)
+        self.assertEqual(self.outputs[-1].pitches[0], 61)
+
+    def test_invalid_segment_edit_preserves_paused_plan_and_cursor(self):
+        self.app.begin_seek()
+        self.app.seek_fraction(0.5)
+        self.app.end_seek()
+        plan, position = self.app.plan, self.app.player.position
+        self.assertFalse(self.app.rebuild_plan(segments=[(4, 5)]))
+        self.assertIs(self.app.plan, plan)
+        self.assertEqual(self.app.player.position, position)
+        self.assertTrue(self.app.player.paused)
+        self.assertEqual(self.app.segments, [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

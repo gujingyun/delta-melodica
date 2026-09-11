@@ -10,7 +10,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 import mido
-from music import Mapping, Note, Song, compile_plan, fingerings, monophonic, parse_jianpu, read_midi, piano_melody, recommend_track
+from music import (Mapping, Note, Song, compile_plan, fingerings, monophonic, parse_jianpu,
+                   read_midi, piano_melody, recommend_track, validate_segments, segment_source_position)
 from player import Player, release_time
 from win_input import Hotkeys, INPUT, WindowsOutput, keyboard_event, target_matches, permission_problem, process_elevated
 
@@ -87,6 +88,56 @@ class MusicTests(unittest.TestCase):
             midi.save(path)
             with self.assertRaises(ValueError):
                 read_midi(path)
+
+
+class SegmentTests(unittest.TestCase):
+    def test_segments_clip_long_notes_keep_rests_and_skip_excluded_notes(self):
+        song = parse_jianpu("1:4 0:2 2:2 3:2 0:2", 60)
+        plan = compile_plan(song, Mapping(), segments=[(2, 5), (8.5, 12)])
+        self.assertEqual([(n.start, n.end, n.source_pitch) for n in plan.notes], [(0, 2, 60), (3, 4.5, 64)])
+        self.assertEqual(plan.duration, 6.5)
+        self.assertEqual(plan.source_count, 2)
+        self.assertEqual(song.duration, 12)
+        self.assertEqual(song.notes[0].start, 0)
+
+    def test_user_order_repeats_and_adjacent_same_pitch_remain_separate(self):
+        song = parse_jianpu("1:2 2:2 3:2", 60)
+        plan = compile_plan(song, Mapping(), style="piano", segments=[(4, 5), (0, 1), (0, 1)])
+        self.assertEqual([(n.start, n.end, n.source_pitch) for n in plan.notes],
+                         [(0, 1, 64), (1, 2, 60), (2, 3, 60)])
+        self.assertEqual(plan.duration, 3)
+
+    def test_segments_use_original_time_with_speed_transpose_and_track(self):
+        song = Song("多轨", [Note(0, 8, 60, 0), Note(0, 8, 72, 1)])
+        segments = [(1, 3), (5, 8)]
+        plan = compile_plan(song, Mapping(), track=0, speed=2, transpose=1, segments=segments)
+        self.assertEqual([(n.start, n.end, n.source_pitch) for n in plan.notes], [(0, 1, 61), (1, 2.5, 61)])
+        self.assertEqual(plan.duration, 2.5)
+        self.assertEqual(segments, [(1, 3), (5, 8)])
+
+    def test_exact_boundaries_do_not_include_notes_outside_selection(self):
+        song = parse_jianpu("1 2 3", 60)
+        plan = compile_plan(song, Mapping(), segments=[(1, 2)])
+        self.assertEqual([n.source_pitch for n in plan.notes], [62])
+        self.assertEqual(plan.duration, 1)
+
+    def test_empty_selection_means_full_song_but_silent_selection_is_rejected(self):
+        song = parse_jianpu("1 0:3", 60)
+        self.assertEqual(compile_plan(song, Mapping(), segments=[]), compile_plan(song, Mapping()))
+        with self.assertRaisesRegex(ValueError, "没有可演奏"):
+            compile_plan(song, Mapping(), segments=[(1, 3)])
+
+    def test_invalid_ranges_are_rejected(self):
+        for segments in (None, "1-2", [1], [(1,)], [(2, 1)], [(-1, 2)], [(0, 11)], [(1, 1)],
+                         [(float("nan"), 2)], [(0, float("inf"))], [(True, 2)], [("1", 2)], [(0, 1)]*101):
+            with self.subTest(segments=segments), self.assertRaises(ValueError):
+                validate_segments(segments, 10)
+
+    def test_source_position_at_splices_and_end(self):
+        segments = [(10, 12), (4, 7)]
+        for position, expected in ((0, 10), (1, 11), (2, 4), (4, 6), (5, 7), (20, 7)):
+            self.assertEqual(segment_source_position(position, segments, 20), expected)
+        self.assertEqual(segment_source_position(3, [], 10), 3)
 
 
 class TrackNameTests(unittest.TestCase):
@@ -438,6 +489,34 @@ class PlayerTests(unittest.TestCase):
         with patch("player.time.perf_counter", side_effect=lambda: clock[0]):
             self.player._run(plan, lambda: output, 0, 0.85, start_at=start_at)
         return sent, clock[0]
+
+    def test_segment_splice_releases_and_retriggers_same_pitch_then_stops(self):
+        song = parse_jianpu("1:8 2:2", 60)
+        plan = compile_plan(song, Mapping(), style="piano", segments=[(1, 2), (5, 6)])
+        sent, end = self.recorded_run(plan, 0)
+        self.assertEqual([(pitch, action) for pitch, _, action in sent],
+                         [(60, "on"), (None, "off"), (60, "on"), (None, "off")])
+        self.assertAlmostEqual(sent[1][1], 100.975)
+        self.assertAlmostEqual(sent[2][1], 101)
+        self.assertAlmostEqual(end, 102)
+        self.assertEqual(self.player.position, 2)
+
+    def test_live_speed_inside_segments_keeps_splice_and_final_boundary(self):
+        song = parse_jianpu("1:4 2:4 3:4", 60)
+        options = {"style": "piano", "segments": [(1, 3), (9, 11)]}
+        plan = compile_plan(song, Mapping(), **options)
+        replacement = compile_plan(song, Mapping(), speed=2, **options)
+        sent, end = self.recorded_run(plan, 0, [(100.5, replacement)])
+        self.assertEqual([pitch for pitch, _, action in sent if action == "on"], [60, 64])
+        self.assertAlmostEqual(sent[2][1], 101.25)
+        self.assertAlmostEqual(end, 102.25)
+
+    def test_resume_at_second_segment_skips_first_and_excluded_notes(self):
+        song = parse_jianpu("1:4 2:4 3:4", 60)
+        plan = compile_plan(song, Mapping(), style="piano", segments=[(1, 3), (9, 11)])
+        sent, end = self.recorded_run(plan, 2.5)
+        self.assertEqual([pitch for pitch, _, action in sent if action == "on"], [64])
+        self.assertAlmostEqual(end, 101.5)
 
     def test_live_speed_changes_remaining_note_and_rest_without_retrigger(self):
         song = parse_jianpu("1:2 2:2 0:2", 60)
