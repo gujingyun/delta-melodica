@@ -6,7 +6,7 @@
 
 - `app.py`：界面入口、曲库与设置；`overlay.py`：游戏悬浮窗；`tray.py`：系统托盘及后台事件入口。
 - `music.py`：曲谱解析、旋律整理和八键映射；`player.py`：播放调度；`win_input.py`：Windows 输入、热键和权限检查。
-- `test_music.py`、`test_overlay.py`、`test_lifecycle.py`：根目录中的核心、悬浮窗和托盘生命周期测试。
+- `test_music.py`、`test_transport.py`、`test_overlay.py`、`test_lifecycle.py`：核心调度、暂停定位、悬浮窗和托盘生命周期测试。
 - 内置曲谱位于 `music.py` 的 `DEMO_SCORES`；`export_demos.py` 导出示例 MIDI；`third_party/` 保存依赖许可证。
 - `dist/`、`releases/`、`work/` 分别保存成品、历史发行包和临时数据，均已忽略；使用说明见 `README.md`，验证结果见 `验证记录.md`。
 
@@ -25,6 +25,8 @@ python -m venv .venv
 ```powershell
 # 曲谱、调度及模拟输入测试
 .\.venv\Scripts\python.exe -m unittest -v test_music
+# 暂停续播、拖动定位及快速操作的事件顺序
+.\.venv\Scripts\python.exe -m unittest -v test_transport
 # 悬浮窗集成测试，会操作自建的本地窗口
 .\.venv\Scripts\python.exe -m unittest -v test_overlay
 # 托盘恢复、窗口隐藏和退出资源清理
@@ -53,4 +55,4 @@ python -m venv .venv
 
 曲库、设置和诊断日志保存在 `%LOCALAPPDATA%\DeltaMelodica`，保持该目录兼容。测试使用临时目录或 `--data-dir` 隔离数据，不提交个人 MIDI、日志、虚拟环境或构建产物。保留前台窗口检查及停止释放机制；`--game-test` 会实际发键，仅用于明确安排的游戏内验证。
 
-关闭主窗口仅隐藏，彻底退出由系统托盘菜单触发；托盘和热键线程只能投递界面事件，Tk 窗口操作留在主线程。托盘失败时必须保留恢复与退出入口。
+关闭主窗口仅隐藏，彻底退出由系统托盘菜单触发；Tk 窗口操作留在主线程，F9 可直接取消播放器后投递界面事件。F8 保留位置续播，F9 停止归零；进度统一取自播放器，过滤旧播放批次的回调。托盘失败时必须保留恢复与退出入口。

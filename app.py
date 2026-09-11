@@ -10,7 +10,6 @@ from pathlib import Path
 import queue
 import shutil
 import sys
-import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import uuid
@@ -54,7 +53,7 @@ class App:
         self.log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         self.log.addHandler(self.log_handler)
         self.elevated = process_elevated()
-        self.log.info("启动 三角洲口风琴 v0.5；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
+        self.log.info("启动 三角洲口风琴 v0.6；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
         self.settings = DEFAULTS.copy()
         self.load_error = None
         try:
@@ -71,10 +70,13 @@ class App:
         except (ValueError, TypeError, AttributeError, OSError) as error:
             self.load_error = f"设置读取失败，已使用默认值：{error}"
         self.events = queue.Queue()
-        self.player = Player(lambda kind, value: self.events.put((kind, value)))
+        self.player = Player(lambda run_id, kind, value: self.events.put(("player", (run_id, kind, value))))
         self.song, self.plan, self.current_source = None, None, None
         self.entries, self.track_ids, self.locked_widgets = [], [], []
-        self.started_at, self.playing_mode, self.current_note = None, "", None
+        self.playing_mode, self.current_note = "", None
+        self.seeking, self.pending_play, self.transport_revision = False, None, 0
+        self.seek_revision = 0
+        self.restore_plan_after_test = False
         self.busy, self.closing = False, False
         self.speed = tk.StringVar(value="1.00")
         self.transpose = tk.StringVar(value="0")
@@ -119,7 +121,7 @@ class App:
 
     def _build(self):
         root = self.root
-        root.title("三角洲口风琴 v0.5 · MIDI 自动演奏")
+        root.title("三角洲口风琴 v0.6 · MIDI 自动演奏")
         root.geometry("1120x850")
         root.minsize(1000, 830)
         root.configure(bg=BG)
@@ -153,7 +155,7 @@ class App:
             self.admin_button = ttk.Button(header, text="以管理员身份重启", command=self.elevate)
             self.admin_button.pack(side="right", padx=(0, 12))
             self.locked_widgets.append(self.admin_button)
-        tk.Label(header, text="v0.5 · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
+        tk.Label(header, text="v0.6 · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
 
         body = tk.Frame(root, bg=BG)
         body.pack(fill="both", expand=True, padx=28)
@@ -219,8 +221,16 @@ class App:
         self.roll = tk.Canvas(score_card, bg=DEEP, highlightthickness=0, height=70)
         self.roll.pack(fill="both", expand=True, padx=22)
         self.roll.bind("<Configure>", lambda event: self.draw_roll())
-        self.progress = ttk.Progressbar(score_card, mode="determinate", maximum=100)
+        style.configure("Horizontal.TScale", background=ACCENT, troughcolor=LINE)
+        self.progress = ttk.Scale(score_card, from_=0, to=100, value=0, cursor="hand2")
         self.progress.pack(fill="x", padx=22, pady=(12, 10))
+        self.progress.bind("<ButtonPress-1>", self._seek_press)
+        self.progress.bind("<B1-Motion>", self._seek_motion)
+        self.progress.bind("<ButtonRelease-1>", self._seek_release)
+        for key, step in (("Left", -2), ("Right", 2), ("Down", -2), ("Up", 2)):
+            self.progress.bind(f"<{key}>", lambda event, step=step: self._seek_key(step))
+        self.progress.bind("<Home>", lambda event: self._seek_key(to_end=False))
+        self.progress.bind("<End>", lambda event: self._seek_key(to_end=True))
         tk.Label(score_card, textvariable=self.stats, bg=CARD, fg=MUTED, font=("Microsoft YaHei UI", 9), anchor="w").pack(fill="x", padx=22)
         self.keys_canvas = tk.Canvas(score_card, height=73, bg=CARD, highlightthickness=0)
         self.keys_canvas.pack(fill="x", padx=22, pady=(8, 10))
@@ -228,9 +238,9 @@ class App:
 
         controls = tk.Frame(content, bg=BG)
         controls.pack(fill="x", pady=(17, 0))
-        self.preview_button = ttk.Button(controls, text="▷  本机试听", command=lambda: self.play(True))
+        self.preview_button = ttk.Button(controls, text="▷  本机试听", command=lambda: self.toggle_play(True))
         self.preview_button.pack(side="left", padx=(0, 10))
-        self.play_button = ttk.Button(controls, text="▶  游戏演奏  F8", style="Accent.TButton", command=lambda: self.play(False))
+        self.play_button = ttk.Button(controls, text="▶  游戏演奏  F8", style="Accent.TButton", command=lambda: self.toggle_play(False))
         self.play_button.pack(side="left", fill="x", expand=True, padx=(0, 10))
         self.stop_button = ttk.Button(controls, text="■  停止  F9", command=self.stop)
         self.stop_button.pack(side="right")
@@ -248,7 +258,7 @@ class App:
         log_button = tk.Label(bottom, text="查看诊断日志", bg=BG, fg=ACCENT, cursor="hand2", font=("Microsoft YaHei UI", 9))
         log_button.pack(side="right")
         log_button.bind("<Button-1>", lambda event: self.show_log())
-        self.footer = tk.Label(root, text="F6 显示 / 隐藏悬浮窗　F7 操作　F8 播放 / 停止　F9 停止　｜　关闭主窗口后继续运行，右下角托盘退出",
+        self.footer = tk.Label(root, text="F6 显隐　F7 操作　F8 暂停 / 继续　F9 停止归零　｜　拖动进度后按 F8 继续；关闭窗口后可从托盘退出",
                  bg=BG, fg=MUTED, font=("Microsoft YaHei UI", 9))
         self.footer.pack(anchor="w", padx=28, pady=(5, 10))
 
@@ -344,6 +354,9 @@ class App:
         try:
             self.plan = compile_plan(self.song, self.mapping(), self.track_ids[self.track_combo.current()],
                                      float(self.speed.get()), int(self.transpose.get()), PLAY_STYLES[self.arrangement.get()])
+            self.transport_revision += 1
+            self.pending_play, self.seeking = None, False
+            self.player.stop()
             if self.plan.style == "piano":
                 self.stats.set(f"{len(self.plan.notes)} 个旋律音  ·  整理 {self.plan.cleaned} 个音段  ·  连接 {self.plan.bridged} 处间隙  ·  {self.plan.folded} 个音折回八度")
             else:
@@ -354,6 +367,7 @@ class App:
             self.detail.set("先试听，再进入游戏取出口风琴。按 F8 开始，F9 停止。")
             self.draw_roll()
             self.draw_keys()
+            self._update_play_buttons()
         except (ValueError, IndexError) as error:
             self.plan = None
             self.status.set("请检查设置")
@@ -462,14 +476,42 @@ class App:
         for widget in self.locked_widgets:
             state = "disabled" if busy else ("readonly" if isinstance(widget, ttk.Combobox) else "normal")
             widget.configure(state=state)
-        for widget in (self.preview_button, self.play_button):
-            widget.configure(state="disabled" if busy else "normal")
+        self._update_play_buttons()
+
+    def _update_play_buttons(self):
+        for button, preview, label in ((self.preview_button, True, "本机试听"), (self.play_button, False, "游戏演奏  F8")):
+            current = (self.playing_mode == "本机试听") == preview
+            waiting = self.busy and self.player.cancel.is_set()
+            disabled = self.seeking or (self.busy and (not current or waiting))
+            if self.busy and current and not waiting:
+                text = "Ⅱ  暂停试听" if preview else "Ⅱ  暂停演奏  F8"
+            elif self.player.paused:
+                text = "▷  继续试听" if preview else "▶  继续演奏  F8"
+            else:
+                text = ("▷  " if preview else "▶  ") + label
+            button.configure(text=text, state="disabled" if disabled else "normal")
+
+    def toggle_play(self, preview=False):
+        if self.pending_play is not None:
+            self.transport_revision += 1
+            self.pending_play = None
+        elif self.player.active and not self.player.cancel.is_set():
+            self.pause("播放按钮 / F8")
+        else:
+            self.play(preview)
 
     def play(self, preview=False):
-        if self.busy or self.player.active or self.root.grab_current():
+        if self.seeking or self.root.grab_current():
+            return
+        self.transport_revision += 1
+        if self.busy or self.player.active:
+            if self.player.cancel.is_set():
+                self.pending_play = preview
             self.log.info("启动请求未执行：忙碌=%s；播放器=%s；弹窗=%s", self.busy, self.player.active, bool(self.root.grab_current()))
             return
-        self.rebuild_plan()
+        if self.restore_plan_after_test:
+            self.rebuild_plan()
+            self.restore_plan_after_test = False
         if not self.plan:
             self.log.warning("启动请求未执行：没有有效乐谱")
             return
@@ -484,30 +526,98 @@ class App:
             if problem:
                 raise RuntimeError(problem)
             return WindowsOutput(window)
-        self.started_at = None
+        continuing = self.player.paused
+        start_at = self.player.position if continuing and self.player.position < self.plan.duration else 0
         self.playing_mode = "本机试听" if preview else "游戏演奏"
-        countdown = 0 if preview else settings["countdown"]
+        countdown = 0 if preview or (continuing and target_matches(foreground(), settings["target"])) else settings["countdown"]
         if not preview and self.game_test_pending:
             from music import Plan
             notes = self.plan.notes[:7]
             self.plan = Plan(notes, notes[-1].end, 0, len(notes))
             countdown = 10
             self.game_test_pending = False
+            self.restore_plan_after_test = True
+            start_at = 0
             self.log.info("本次为游戏内七音测试；10 秒倒计时；之后恢复普通演奏模式")
         self.log.info("开始请求：%s；曲目=%s；音符=%s；方式=%s；音轨=%s；整理=%s；连接=%s", self.playing_mode,
                       self.song.title, len(self.plan.notes), self.plan.style, self.plan.track, self.plan.cleaned, self.plan.bridged)
-        self._set_busy(True)
         self.status.set("正在准备" if preview else "准备游戏演奏")
-        self.detail.set("试听使用本机合成音色。" if preview else "倒计时结束后开始，请保持游戏内口风琴打开；F9 随时停止。")
+        self.detail.set(f"从 {clock_label(start_at)} 开始。" + ("试听使用本机合成音色。" if preview else "请保持游戏内口风琴打开；F8 暂停，F9 停止归零。"))
         try:
-            self.player.start(self.plan, PreviewOutput if preview else game_output, countdown, settings["gate"] / 100)
+            self.player.start(self.plan, PreviewOutput if preview else game_output, countdown, settings["gate"] / 100, start_at=start_at)
+            self._set_busy(True)
         except Exception as error:
             self._set_busy(False)
             self.detail.set(str(error))
 
     def stop(self, source="停止按钮"):
         self.log.info("停止请求：%s", source)
+        self.transport_revision += 1
         self.player.stop()
+        self.events.put(("stop_ui", (self.player.run_id, self.transport_revision)))
+
+    def pause(self, source="暂停"):
+        self.transport_revision += 1
+        self.pending_play, self.seeking = None, False
+        self.player.pause()
+        self.log.info("暂停请求：%s；位置=%.3f", source, self.player.position)
+        self._update_play_buttons()
+
+    def begin_seek(self):
+        if not self.plan:
+            return
+        self.pause("拖动进度")
+        self.seeking = True
+        self.seek_revision = self.transport_revision
+
+    def seek_fraction(self, fraction):
+        if not self.plan or not self.seeking or self.seek_revision != self.transport_revision:
+            return
+        self.player.seek(max(0.0, min(1.0, fraction))*self.plan.duration, self.plan.duration)
+        self.current_note = None
+        self._update_progress()
+        self.draw_keys()
+        self.status.set("定位至 " + clock_label(self.player.position))
+        self.detail.set("松开进度后按 F8 从此处继续；F9 停止并回到曲首。")
+
+    def end_seek(self):
+        self.seeking = False
+        self._update_play_buttons()
+
+    def _seek_fraction_at(self, event):
+        return (event.x-8)/max(1, self.progress.winfo_width()-16)
+
+    def _seek_press(self, event):
+        self.progress.focus_set()
+        self.begin_seek()
+        self.seek_fraction(self._seek_fraction_at(event))
+        return "break"
+
+    def _seek_motion(self, event):
+        if self.seeking:
+            self.seek_fraction(self._seek_fraction_at(event))
+        return "break"
+
+    def _seek_release(self, event):
+        if self.seeking:
+            self.seek_fraction(self._seek_fraction_at(event))
+            self.end_seek()
+        return "break"
+
+    def _seek_key(self, step=0, to_end=None):
+        if self.plan:
+            position = self.plan.duration if to_end else 0 if to_end is False else self.player.position+step
+            self.begin_seek()
+            self.seek_fraction(position/max(self.plan.duration, 0.01))
+            self.end_seek()
+        return "break"
+
+    def _update_progress(self):
+        if self.plan:
+            elapsed = min(self.plan.duration, self.player.position)
+            self.elapsed.set(f"{clock_label(elapsed)} / {clock_label(self.plan.duration)}")
+            self.progress["value"] = elapsed/max(self.plan.duration, 0.01)*100
+            self.draw_roll(elapsed)
 
     def _poll(self):
         if self.closing:
@@ -515,6 +625,12 @@ class App:
         try:
             while True:
                 kind, value = self.events.get_nowait()
+                if kind == "player":
+                    run_id, kind, value = value
+                    if run_id != self.player.run_id:
+                        continue
+                    if self.player.cancel.is_set() and kind != "done":
+                        continue
                 if kind == "toggle":
                     self.log.info("收到 F8 热键；当前忙碌=%s", self.busy)
                     self.overlay.toggle_play()
@@ -528,6 +644,14 @@ class App:
                     self.show_main()
                 elif kind == "stop":
                     self.stop("系统托盘")
+                elif kind == "stop_ui":
+                    if value == (self.player.run_id, self.transport_revision):
+                        self.pending_play, self.seeking, self.current_note = None, False, None
+                        self.status.set("已停止 · 回到曲首")
+                        self.detail.set("按 F8 从曲首播放，或拖动进度选择位置。")
+                        self._set_busy(self.player.active)
+                        self._update_progress()
+                        self.draw_keys()
                 elif kind == "exit":
                     self.close()
                     return
@@ -549,7 +673,6 @@ class App:
                     self.status.set(f"{value} 秒后开始 · 保持口风琴打开")
                 elif kind == "started":
                     self.log.info("已开始：%s", self.playing_mode)
-                    self.started_at = time.perf_counter()
                     self.status.set(self.playing_mode + "中")
                 elif kind == "note":
                     index, note = value
@@ -562,25 +685,20 @@ class App:
                 elif kind == "done":
                     status, error = value
                     self.log.info("播放结束：%s；错误=%s", status, error)
-                    elapsed = min(self.plan.duration, time.perf_counter()-self.started_at) if self.started_at else 0
-                    if status == "演奏完成" and not error:
-                        elapsed = self.plan.duration
-                    self.elapsed.set(f"{clock_label(elapsed)} / {clock_label(self.plan.duration)}")
-                    self.progress["value"] = elapsed/max(self.plan.duration, 0.01)*100
-                    self.started_at = None
                     self.current_note = None
                     self._set_busy(False)
-                    self.status.set(status if not error else "已停止，请检查提示")
-                    self.detail.set(error or "可以选择下一首，或按 F8 再次演奏。")
+                    self.status.set("已暂停，请检查提示" if error else "已暂停" if self.player.paused else status)
+                    self.detail.set(error or ("按 F8 从当前位置继续，或拖动进度定位。" if self.player.paused else "按 F8 从曲首播放，或拖动进度选择位置。"))
                     self.draw_keys()
-                    self.draw_roll(elapsed)
+                    self._update_progress()
         except queue.Empty:
             pass
-        if self.started_at is not None and self.plan:
-            elapsed = min(self.plan.duration, time.perf_counter()-self.started_at)
-            self.elapsed.set(f"{clock_label(elapsed)} / {clock_label(self.plan.duration)}")
-            self.progress["value"] = elapsed/max(self.plan.duration, 0.01)*100
-            self.draw_roll(elapsed)
+        if self.busy and not self.seeking:
+            self._update_progress()
+        if self.pending_play is not None and not self.player.active and not self.seeking:
+            preview, self.pending_play = self.pending_play, None
+            self._set_busy(False)
+            self.play(preview)
         self.poll_timer = self.root.after(40, self._poll)
 
     def draw_keys(self):
@@ -596,12 +714,14 @@ class App:
             canvas.create_text(x+key_width/2, 27, text=key.upper(), fill=BG if active else TEXT, font=("Consolas", 17, "bold"))
             canvas.create_text(x+key_width/2, 57, text=str(index+1) if index < 7 else "高音 1", fill=BG if active else MUTED, font=("Microsoft YaHei UI", 9))
 
-    def draw_roll(self, elapsed=0):
+    def draw_roll(self, elapsed=None):
         canvas = self.roll
         canvas.delete("all")
         width, height = max(canvas.winfo_width(), 200), max(canvas.winfo_height(), 80)
         if not self.plan:
             return
+        if elapsed is None:
+            elapsed = self.player.position
         span = 12
         left = max(0, elapsed-2) if elapsed > 2 else 0
         low = min(n.fingering.pitch for n in self.plan.notes)-1
@@ -648,7 +768,7 @@ class App:
     def show_main(self):
         if self.closing:
             return
-        self.stop("打开主窗口")
+        self.pause("打开主窗口")
         self.overlay.editing = False
         self.overlay._hide()
         self.root.deiconify()

@@ -37,6 +37,7 @@ class Overlay:
         self.regions = []
         self.page = 0
         self.drag_origin = None
+        self.seek_drag = False
         self.window = tk.Toplevel(app.root)
         self.window.withdraw()
         self.window.title("三角洲口风琴 · 游戏悬浮窗")
@@ -101,7 +102,7 @@ class Overlay:
         if target_matches(current, self.app.settings["target"]):
             self.target = current
         if self.app.busy:
-            self.app.stop("打开悬浮窗操作面板")
+            self.app.pause("打开悬浮窗操作面板")
         self.enabled, self.editing = True, True
         self.window.geometry(f"{self.WIDTH}x{self.PANEL_HEIGHT}+{self.x}+{self.y}")
         self._show()
@@ -115,7 +116,7 @@ class Overlay:
         self.save()
 
     def return_to_game(self, start=False):
-        if start and self.app.busy:
+        if start and self.app.player.active and not self.app.player.cancel.is_set():
             return
         try:
             target = self.game_window()
@@ -127,7 +128,9 @@ class Overlay:
             self.target = target
             self.app.log.info("悬浮窗交还游戏焦点：PID=%s；播放=%s", target[1], start)
             if start:
-                self.window.after(120, lambda: self.app.play(False))
+                revision = self.app.transport_revision
+                # 返回游戏后的延迟启动必须服从后续的暂停、定位和 F9 停止。
+                self.window.after(120, lambda: self.app.play(False) if not self.closed and revision == self.app.transport_revision else None)
         except RuntimeError as error:
             self.editing = True
             self.window.geometry(f"{self.WIDTH}x{self.PANEL_HEIGHT}+{self.x}+{self.y}")
@@ -159,12 +162,12 @@ class Overlay:
             self.begin_edit()
 
     def toggle_play(self):
-        if self.app.busy:
-            self.app.stop("F8")
+        if self.app.player.active and not self.app.player.cancel.is_set():
+            self.app.pause("F8")
         elif self.editing:
             self.return_to_game(start=True)
         else:
-            self.app.play(False)
+            self.app.toggle_play(False)
 
     def tick(self):
         if self.closed:
@@ -174,6 +177,9 @@ class Overlay:
         if in_game:
             self.target = current
         if self.editing and current[0] != self.hwnd:
+            if self.seek_drag:
+                self.seek_drag = False
+                self.app.end_seek()
             # 用户主动切回游戏或其他程序时，立即恢复鼠标穿透。
             self.editing = False
             self.window.geometry(f"{self.WIDTH}x{self.HUD_HEIGHT}+{self.x}+{self.y}")
@@ -206,21 +212,25 @@ class Overlay:
         self._text(16, 84, self.app.status.get()[:27], ACCENT, 10)
         self._text(422, 84, self.app.elapsed.get(), MUTED, 9, anchor="e")
         c.create_rectangle(16, 103, 424, 107, fill=CARD, outline="")
-        c.create_rectangle(16, 103, 16+408*float(self.app.progress["value"])/100, 107, fill=ACCENT, outline="")
+        progress_x = 16+408*float(self.app.progress["value"])/100
+        c.create_rectangle(16, 103, progress_x, 107, fill=ACCENT, outline="")
+        if self.editing:
+            c.create_oval(progress_x-5, 100, progress_x+5, 110, fill=ACCENT, outline="")
         for index, key in enumerate(self.app.settings["keys"]):
             x = 16+index*51
             active = self.app.current_note and self.app.current_note.fingering.key == key
             c.create_rectangle(x, 119, x+45, 147, fill=ACCENT if active else CARD, outline="")
             self._text(x+22, 133, key.upper(), BG if active else TEXT, 11, True, "center")
         if not self.editing:
-            text = self.app.current_note.fingering.label if self.app.current_note else "F6 隐藏　F7 操作　F8 播放 / 停止　F9 停止"
+            text = self.app.current_note.fingering.label if self.app.current_note else "F6 隐藏　F7 操作　F8 暂停 / 继续　F9 停止"
             self._text(16, 168, text, MUTED, 9)
             return
         ready = not self.app.busy
-        self._button(16, 159, 194, 36, "▶ 播放并返回游戏", lambda: self.return_to_game(True), ready, True)
+        play_label = "▶ 继续并返回游戏" if self.app.player.paused else "▶ 播放并返回游戏"
+        self._button(16, 159, 194, 36, play_label, lambda: self.return_to_game(True), ready, True)
         self._button(220, 159, 94, 36, "■ 停止", lambda: self.app.stop("悬浮窗"))
         self._button(324, 159, 100, 36, "返回 F7", self.return_to_game)
-        self._text(16, 217, "选择曲目", MUTED, 9)
+        self._text(16, 217, "选择曲目 · 上方进度可拖动", MUTED, 9)
         page_count = max(1, (len(self.app.entries)+3)//4)
         self.page = min(self.page, page_count-1)
         self._text(295, 217, f"{self.page+1} / {page_count}", MUTED, 9)
@@ -270,6 +280,9 @@ class Overlay:
         self.app.show_main()
 
     def disable(self):
+        if self.seek_drag:
+            self.seek_drag = False
+            self.app.end_seek()
         return_focus = self.editing and foreground()[0] == self.hwnd
         self.editing, self.enabled = False, False
         overlay_style(self.hwnd, False)
@@ -283,17 +296,28 @@ class Overlay:
                 pass
 
     def _press(self, event):
-        if self.editing and event.y < 38:
+        if self.editing and 16 <= event.x <= 424 and 94 <= event.y <= 115:
+            self.seek_drag = True
+            self.app.begin_seek()
+            self.app.seek_fraction((event.x-16)/408)
+        elif self.editing and event.y < 38:
             self.drag_origin = (event.x_root, event.y_root, self.window.winfo_x(), self.window.winfo_y())
 
     def _drag(self, event):
-        if self.drag_origin:
+        if self.seek_drag:
+            self.app.seek_fraction((event.x-16)/408)
+        elif self.drag_origin:
             px, py, x, y = self.drag_origin
             self.x = max(0, min(self.app.root.winfo_screenwidth()-self.WIDTH, x+event.x_root-px))
             self.y = max(0, min(self.app.root.winfo_screenheight()-self.PANEL_HEIGHT, y+event.y_root-py))
             self.window.geometry(f"+{self.x}+{self.y}")
 
     def _release(self, event):
+        if self.seek_drag:
+            self.app.seek_fraction((event.x-16)/408)
+            self.seek_drag = False
+            self.app.end_seek()
+            return
         if self.drag_origin:
             self.drag_origin = None
             self.save()

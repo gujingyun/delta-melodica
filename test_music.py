@@ -283,7 +283,7 @@ class FakeOutput:
 class PlayerTests(unittest.TestCase):
     def setUp(self):
         self.events = []
-        self.player = Player(lambda kind, value: self.events.append((kind, value)))
+        self.player = Player(lambda run_id, kind, value: self.events.append((kind, value)))
         self.output = FakeOutput()
         self.plan = compile_plan(parse_jianpu("1:8", 120), Mapping())
 
@@ -334,6 +334,101 @@ class PlayerTests(unittest.TestCase):
         self.assertTrue(self.output.closed)
         self.assertFalse(self.output.held)
         self.assertIn("发送失败", self.events[-1][1][1])
+
+    def test_pause_freezes_cursor_releases_output_and_resumes(self):
+        self.player.start(self.plan, lambda: self.output)
+        self.assertTrue(self.output.started.wait(1))
+        self.player.pause()
+        self.player.thread.join(0.5)
+        position = self.player.position
+        self.assertGreater(position, 0)
+        self.assertTrue(self.player.paused)
+        self.assertTrue(self.output.closed)
+        self.assertFalse(self.output.held)
+        self.assertEqual(self.events[-1], ("done", ("已暂停", None)))
+        with patch("player.time.perf_counter", return_value=100000):
+            self.assertEqual(self.player.position, position)
+        output = FakeOutput()
+        self.player.start(self.plan, lambda: output, start_at=position)
+        self.assertTrue(output.started.wait(1))
+        self.player.pause()
+        self.player.thread.join(0.5)
+        self.assertGreaterEqual(self.player.position, position)
+        self.assertLess(self.player.position, position+0.5)
+        self.assertTrue(output.closed)
+        self.player.stop()
+        self.assertEqual(self.player.position, 0)
+        self.assertFalse(self.player.paused)
+
+    def test_pause_countdown_preserves_selected_position(self):
+        self.player.start(self.plan, lambda: self.fail("暂停倒计时不能打开输入"), countdown=2, start_at=2)
+        self.player.pause()
+        self.player.thread.join(0.5)
+        self.assertEqual(self.player.position, 2)
+        self.assertTrue(self.player.paused)
+        self.assertEqual(self.events[-1], ("done", ("已暂停", None)))
+
+    def test_seek_while_playing_releases_key_and_keeps_new_cursor(self):
+        self.player.start(self.plan, lambda: self.output)
+        self.assertTrue(self.output.started.wait(1))
+        self.player.seek(3, self.plan.duration)
+        self.player.thread.join(0.5)
+        self.assertTrue(self.output.closed)
+        self.assertFalse(self.output.held)
+        self.assertEqual(self.player.position, 3)
+        self.player.seek(-4, self.plan.duration)
+        self.assertEqual(self.player.position, 0)
+        self.player.seek(100, self.plan.duration)
+        self.assertEqual(self.player.position, self.plan.duration)
+
+    def recorded_run(self, plan, start_at):
+        clock, sent = [100.0], []
+        class RecordedOutput(FakeOutput):
+            def begin(self, fingering):
+                sent.append((fingering.pitch, clock[0], "on"))
+                super().begin(fingering)
+
+            def release(self):
+                if self.held:
+                    sent.append((None, clock[0], "off"))
+                super().release()
+        output = RecordedOutput()
+        self.player._wait = lambda deadline, output=None: clock.__setitem__(0, max(clock[0], deadline))
+        with patch("player.time.perf_counter", side_effect=lambda: clock[0]):
+            self.player._run(plan, lambda: output, 0, 0.85, start_at=start_at)
+        return sent, clock[0]
+
+    def test_resume_inside_note_plays_remaining_duration_only(self):
+        plan = compile_plan(parse_jianpu("1 0 2:2 3 0", 60), Mapping(), style="piano")
+        original = list(plan.notes)
+        sent, finished = self.recorded_run(plan, 2.5)
+        self.assertEqual([(pitch, on) for pitch, _, on in sent], [(62, "on"), (None, "off"), (64, "on"), (None, "off")])
+        self.assertEqual(sent[0][1], 100)
+        self.assertAlmostEqual(sent[1][1], 101.475)
+        self.assertAlmostEqual(sent[2][1], 101.5)
+        self.assertAlmostEqual(finished, 103.5)
+        self.assertEqual(plan.notes, original)
+
+    def test_seek_into_rest_or_released_gap_does_not_replay_old_note(self):
+        plan = compile_plan(parse_jianpu("1 0 2", 60), Mapping())
+        for start_at in (0.9, 1.5):
+            with self.subTest(start_at=start_at):
+                sent, _ = self.recorded_run(plan, start_at)
+                self.assertEqual(sent[0][0], 62)
+                self.assertAlmostEqual(sent[0][1], 100+2-start_at)
+
+    def test_start_at_end_never_opens_output(self):
+        self.player.start(self.plan, lambda: self.fail("曲末不能发送音符"), start_at=self.plan.duration)
+        self.player.thread.join(0.5)
+        self.assertFalse(self.player.active)
+        self.assertEqual(self.player.position, self.plan.duration)
+        self.assertFalse(self.player.paused)
+        self.assertEqual(self.events[-1], ("done", ("演奏完成", None)))
+
+    def test_invalid_start_position_is_rejected(self):
+        for position in (-1, self.plan.duration+1, float("nan"), float("inf")):
+            with self.subTest(position=position), self.assertRaises(ValueError):
+                self.player.start(self.plan, FakeOutput, start_at=position)
 
 
 if __name__ == "__main__":

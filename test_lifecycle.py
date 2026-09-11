@@ -1,4 +1,5 @@
 """验证托盘入口、窗口隐藏与彻底退出时的资源清理。"""
+import gc
 import tempfile
 import time
 import tkinter as tk
@@ -20,6 +21,9 @@ class LifecycleTests(unittest.TestCase):
     def tearDown(self):
         self.app.close()
         self.folder.cleanup()
+        # Tk 对象必须由主线程回收，避免下一项托盘测试在线程中触发循环回收。
+        self.app = self.root = None
+        gc.collect()
 
     def pump(self, condition, timeout=3):
         deadline = time.monotonic()+timeout
