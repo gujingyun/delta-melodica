@@ -88,7 +88,7 @@ class App:
         root = self.root
         root.title("口风琴助手 · MIDI 自动演奏")
         root.geometry("1120x820")
-        root.minsize(1000, 770)
+        root.minsize(1000, 800)
         root.configure(bg=BG)
         root.option_add("*Font", ("Microsoft YaHei UI", 10))
         style = ttk.Style()
@@ -107,10 +107,10 @@ class App:
         root.option_add("*TCombobox*Listbox.background", CARD)
         root.option_add("*TCombobox*Listbox.foreground", TEXT)
         header = tk.Frame(root, bg=BG)
-        header.pack(fill="x", padx=28, pady=(23, 20))
+        header.pack(fill="x", padx=28, pady=(16, 14))
         left = tk.Frame(header, bg=BG)
         left.pack(side="left")
-        tk.Label(left, text="口风琴助手", font=("Microsoft YaHei UI", 24, "bold"), fg=TEXT, bg=BG).pack(anchor="w")
+        tk.Label(left, text="口风琴助手", font=("Microsoft YaHei UI", 22, "bold"), fg=TEXT, bg=BG).pack(anchor="w")
         tk.Label(left, text="MELODICA  /  让旋律进入游戏", font=("Microsoft YaHei UI", 10), fg=MUTED, bg=BG).pack(anchor="w", pady=(3, 0))
         settings = ttk.Button(header, text="键位与设置", command=self.settings_dialog)
         settings.pack(side="right")
@@ -140,11 +140,11 @@ class App:
         content.pack(side="left", fill="both", expand=True)
         track_card = tk.Frame(content, bg=CARD)
         track_card.pack(fill="x")
-        tk.Label(track_card, text="当前曲目", bg=CARD, fg=ACCENT, font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=22, pady=(19, 5))
+        tk.Label(track_card, text="当前曲目", bg=CARD, fg=ACCENT, font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=22, pady=(14, 5))
         tk.Label(track_card, textvariable=self.title, bg=CARD, fg=TEXT, font=("Microsoft YaHei UI", 20, "bold"), anchor="w").pack(fill="x", padx=22)
-        tk.Label(track_card, textvariable=self.subtitle, bg=CARD, fg=MUTED, anchor="w").pack(fill="x", padx=22, pady=(7, 18))
+        tk.Label(track_card, textvariable=self.subtitle, bg=CARD, fg=MUTED, anchor="w").pack(fill="x", padx=22, pady=(5, 12))
         fields = tk.Frame(track_card, bg=CARD)
-        fields.pack(fill="x", padx=22, pady=(0, 18))
+        fields.pack(fill="x", padx=22, pady=(0, 14))
         for column, (label, variable, values, width) in enumerate([
             ("演奏音轨", self.track, [], 26),
             ("速度倍率", self.speed, ["0.25", "0.50", "0.75", "1.00", "1.25", "1.50", "2.00"], 8),
@@ -167,14 +167,14 @@ class App:
         score_top.pack(fill="x", padx=22, pady=(17, 8))
         tk.Label(score_top, text="旋律预览", bg=CARD, fg=TEXT, font=("Microsoft YaHei UI", 12, "bold")).pack(side="left")
         tk.Label(score_top, textvariable=self.elapsed, bg=CARD, fg=MUTED, font=("Consolas", 11)).pack(side="right")
-        self.roll = tk.Canvas(score_card, bg=DEEP, highlightthickness=0, height=125)
+        self.roll = tk.Canvas(score_card, bg=DEEP, highlightthickness=0, height=90)
         self.roll.pack(fill="both", expand=True, padx=22)
         self.roll.bind("<Configure>", lambda event: self.draw_roll())
         self.progress = ttk.Progressbar(score_card, mode="determinate", maximum=100)
         self.progress.pack(fill="x", padx=22, pady=(12, 10))
         tk.Label(score_card, textvariable=self.stats, bg=CARD, fg=MUTED, font=("Microsoft YaHei UI", 9), anchor="w").pack(fill="x", padx=22)
-        self.keys_canvas = tk.Canvas(score_card, height=83, bg=CARD, highlightthickness=0)
-        self.keys_canvas.pack(fill="x", padx=22, pady=(8, 15))
+        self.keys_canvas = tk.Canvas(score_card, height=73, bg=CARD, highlightthickness=0)
+        self.keys_canvas.pack(fill="x", padx=22, pady=(8, 10))
         self.keys_canvas.bind("<Configure>", lambda event: self.draw_keys())
 
         controls = tk.Frame(content, bg=BG)
@@ -189,8 +189,9 @@ class App:
         status_card.pack(fill="x", pady=(13, 0))
         tk.Label(status_card, textvariable=self.status, bg=BG, fg=ACCENT, anchor="w", font=("Microsoft YaHei UI", 11, "bold")).pack(fill="x")
         tk.Label(status_card, textvariable=self.detail, bg=BG, fg=MUTED, anchor="w", justify="left", wraplength=670, font=("Microsoft YaHei UI", 9)).pack(fill="x", pady=(4, 0))
-        tk.Label(root, text="操作：选曲 → 试听 → 游戏内取出口风琴 → 按 F8 开始　｜　F9 随时停止 · 切出目标窗口自动停止",
-                 bg=BG, fg=MUTED, font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=28, pady=(17, 18))
+        self.footer = tk.Label(root, text="操作：选曲 → 试听 → 游戏内取出口风琴 → 按 F8 开始　｜　F9 随时停止 · 切出目标窗口自动停止",
+                 bg=BG, fg=MUTED, font=("Microsoft YaHei UI", 9))
+        self.footer.pack(anchor="w", padx=28, pady=(12, 14))
 
     def _load_library(self, select_path=None):
         self.entries = [(name, ("demo", name)) for name in DEMO_SCORES]
@@ -448,7 +449,7 @@ class App:
         for index, key in enumerate(keys):
             x = index*(key_width+6)
             active = self.current_note and self.current_note.fingering.key == key
-            canvas.create_rectangle(x, 4, x+key_width, 77, fill=ACCENT if active else "#26363d", outline="")
+            canvas.create_rectangle(x, 4, x+key_width, 71, fill=ACCENT if active else "#26363d", outline="")
             canvas.create_text(x+key_width/2, 27, text=key.upper(), fill=BG if active else TEXT, font=("Consolas", 17, "bold"))
             canvas.create_text(x+key_width/2, 57, text=str(index+1) if index < 7 else "高音 1", fill=BG if active else MUTED, font=("Microsoft YaHei UI", 9))
 
@@ -496,7 +497,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", default=str(Path(os.environ.get("LOCALAPPDATA", str(Path.cwd()))) / "DeltaMelodica"))
     parser.add_argument("--smoke", action="store_true")
-    parser.add_argument("--screenshot")
     args = parser.parse_args()
     try:
         import ctypes
@@ -505,22 +505,32 @@ def main():
         pass
     root = tk.Tk()
     app = App(root, args.data_dir, args.smoke)
+    smoke_exit = 0
     if args.smoke:
         def verify():
+            nonlocal smoke_exit
             try:
                 root.update_idletasks()
                 assert app.plan and len(app.plan.notes) == 42
                 assert app.settings["keys"][-1] == ","
                 assert app.play_button.winfo_ismapped()
-                if args.screenshot:
-                    from PIL import ImageGrab
-                    x, y = root.winfo_rootx(), root.winfo_rooty()
-                    ImageGrab.grab(bbox=(x, y, x+root.winfo_width(), y+root.winfo_height())).save(args.screenshot)
-                Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": True, "notes": len(app.plan.notes), "width": root.winfo_width(), "height": root.winfo_height()}), encoding="utf-8")
+                assert app.footer.winfo_y()+app.footer.winfo_height() <= root.winfo_height()
+                midi_tested = 0
+                for _, source in app.entries:
+                    if source[0] == "file" and source[1].suffix.lower() in (".mid", ".midi"):
+                        imported = read_midi(source[1])
+                        assert compile_plan(imported, app.mapping()).notes
+                        midi_tested += 1
+                Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": True, "notes": len(app.plan.notes), "midi_tested": midi_tested, "width": root.winfo_width(), "height": root.winfo_height()}), encoding="utf-8")
+            except Exception as error:
+                smoke_exit = 1
+                Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": False, "error": str(error)}), encoding="utf-8")
             finally:
                 app.close()
         root.after(1200, verify)
     root.mainloop()
+    if smoke_exit:
+        raise SystemExit(smoke_exit)
 
 
 if __name__ == "__main__":
