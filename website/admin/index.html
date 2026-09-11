@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>三角洲口风琴 · 私有统计</title>
+  <link rel="stylesheet" href="../styles.css">
+  <style>
+    .stats-page { min-height: 100vh; padding: 48px 0 80px; }
+    .stats-header { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 38px; }
+    .stats-header h1 { margin: 0 0 10px; font-size: clamp(34px, 5vw, 58px); }
+    .stats-header p { margin: 0; color: var(--muted); }
+    .stats-refresh { min-height: 42px; padding: 0 18px; border: 1px solid rgba(177,243,109,.45); color: var(--green); background: transparent; font: inherit; cursor: pointer; }
+    .stats-refresh:hover { background: rgba(177,243,109,.1); }
+    .stats-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; max-width: 760px; }
+    .stat-card { padding: 34px; border: 1px solid var(--line); background: var(--panel); }
+    .stat-card span { color: var(--dim); font-size: 14px; }
+    .stat-card strong { display: block; margin-top: 12px; color: var(--green); font-family: Georgia, serif; font-size: clamp(48px, 7vw, 82px); font-weight: 400; line-height: 1; }
+    .stats-status { min-height: 25px; margin-top: 25px; color: var(--dim); font-size: 13px; }
+    .stats-status.error { color: #f0a45e; }
+    .stats-note { max-width: 760px; margin-top: 56px; padding-top: 22px; border-top: 1px solid var(--line); color: var(--dim); font-size: 13px; line-height: 1.8; }
+    @media (max-width: 620px) {
+      .stats-page { padding-top: 30px; }
+      .stats-header { align-items: flex-start; flex-direction: column; }
+      .stats-grid { grid-template-columns: 1fr; }
+      .stat-card { padding: 27px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="stats-page container">
+    <header class="stats-header">
+      <div>
+        <p class="eyebrow"><span class="eyebrow-dot"></span> PRIVATE DASHBOARD</p>
+        <h1>三角洲口风琴<br><em>访问统计</em></h1>
+        <p>仅站长可见 · 数据来自官网公开页面的访问与下载入口</p>
+      </div>
+      <button class="stats-refresh" type="button" id="refresh">刷新数据</button>
+    </header>
+    <section class="stats-grid" aria-label="网站统计数据">
+      <article class="stat-card"><span>浏览次数</span><strong id="views">—</strong></article>
+      <article class="stat-card"><span>下载次数</span><strong id="downloads">—</strong></article>
+    </section>
+    <p class="stats-status" id="status">正在读取数据…</p>
+    <p class="stats-note">统计仅记录官网页面打开次数和页面下载入口点击次数，不记录访客姓名、账号或曲谱内容。浏览次数按页面加载请求计数，直接访问静态文件不会计入下载次数。</p>
+  </main>
+  <script>
+    const views = document.getElementById('views');
+    const downloads = document.getElementById('downloads');
+    const status = document.getElementById('status');
+    const refresh = document.getElementById('refresh');
+
+    async function loadStats() {
+      status.className = 'stats-status';
+      status.textContent = '正在读取数据…';
+      try {
+        const response = await fetch('../api/stats?ts=' + Date.now(), { cache: 'no-store' });
+        if (!response.ok) throw new Error('读取失败');
+        const data = await response.json();
+        views.textContent = Number(data.views || 0).toLocaleString('zh-CN');
+        downloads.textContent = Number(data.downloads || 0).toLocaleString('zh-CN');
+        const updated = data.updated_at ? new Date(data.updated_at).toLocaleString('zh-CN') : '尚无记录';
+        status.textContent = '最后更新：' + updated;
+      } catch (_) {
+        status.className = 'stats-status error';
+        status.textContent = '读取失败，请稍后刷新。';
+      }
+    }
+
+    refresh.addEventListener('click', loadStats);
+    loadStats();
+  </script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+[Unit]
+Description=三角洲口风琴官网统计服务
+After=network.target
+
+[Service]
+Type=simple
+User=melodica-stats
+Group=melodica-stats
+WorkingDirectory=/opt/delta-melodica-stats
+ExecStart=/usr/bin/python3 /opt/delta-melodica-stats/melodica_stats.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/delta-melodica-stats
+
+[Install]
+WantedBy=multi-user.target

@@ -34,7 +34,7 @@
           <h1>把你的曲谱，<em>吹进游戏里。</em></h1>
           <p class="hero-lede">三角洲口风琴把 MIDI 和简谱整理成八键演奏，配合游戏内悬浮窗、全局热键和可定位播放，让练习与演奏更顺手。</p>
           <div class="hero-actions">
-            <a class="button button-primary" href="downloads/delta-melodica-v0.10.exe" download>
+            <a class="button button-primary" href="api/download" download>
               <span aria-hidden="true">↓</span> 下载 v0.10
             </a>
             <a class="text-link" href="#features">先了解功能 <span aria-hidden="true">→</span></a>
@@ -182,7 +182,7 @@
             <p class="eyebrow">LATEST RELEASE</p>
             <h2>三角洲口风琴 <span>v0.10</span></h2>
             <p>最新版加入曲库曲目删除功能，并保留片段播放、钢琴连奏、调速移调、悬浮窗和托盘后台运行能力。</p>
-            <a class="button button-primary" href="downloads/delta-melodica-v0.10.exe" download><span aria-hidden="true">↓</span> 下载 Windows 版</a>
+            <a class="button button-primary" href="api/download" download><span aria-hidden="true">↓</span> 下载 Windows 版</a>
           </div>
           <div class="download-details">
             <div><span>文件格式</span><strong>.exe 单文件</strong></div>
@@ -202,6 +202,14 @@
   </div>
   <script>
     document.getElementById('year').textContent = new Date().getFullYear();
+    try {
+      const sent = navigator.sendBeacon && navigator.sendBeacon('api/view', new Blob([], { type: 'text/plain' }));
+      if (!sent) {
+        fetch('api/view', { method: 'POST', keepalive: true, cache: 'no-store' }).catch(() => {});
+      }
+    } catch (_) {
+      fetch('api/view', { method: 'POST', keepalive: true, cache: 'no-store' }).catch(() => {});
+    }
   </script>
 </body>
 </html>
