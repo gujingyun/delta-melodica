@@ -234,6 +234,16 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(self.app.speed.get(), "0.25")
         self.assertIn("速度倍率", self.app.detail.get())
 
+    def test_speed_steps_include_one_point_seven_five(self):
+        self.app.speed.set("1.50")
+        self.app.change_speed(1)
+        self.assertEqual(self.app.speed.get(), "1.75")
+        self.app.change_speed(1)
+        self.assertEqual(self.app.speed.get(), "2.00")
+        self.app.change_speed(-1)
+        self.assertEqual(self.app.speed.get(), "1.75")
+        self.assertAlmostEqual(self.app.plan.duration, self.app.song.duration / 1.75)
+
     def test_resizing_paused_window_keeps_the_preview_at_the_cursor(self):
         self.app.begin_seek()
         self.app.seek_fraction(0.5)
@@ -257,7 +267,7 @@ class TransportTests(unittest.TestCase):
         self.app.change_speed(3)
         self.app.change_transpose(1)
         self.assertEqual(self.app.original_position(), 11)
-        self.assertEqual(self.app.plan.duration, 2)
+        self.assertAlmostEqual(self.app.plan.duration, 4/1.75)
         self.app.play(True)
         self.wait_playing()
         self.assertEqual(self.outputs[0].pitches[0], 65)

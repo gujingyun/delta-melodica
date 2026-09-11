@@ -33,7 +33,7 @@ ACCENT = "#b7f17c"
 LINE = "#304249"
 ORANGE = "#f1c077"
 PLAY_STYLES = {"钢琴适配 · 连奏": "piano", "原谱 · 分音": "original"}
-SPEEDS = ["0.25", "0.50", "0.75", "1.00", "1.25", "1.50", "2.00"]
+SPEEDS = ["0.25", "0.50", "0.75", "1.00", "1.25", "1.50", "1.75", "2.00"]
 
 DEFAULTS = {"keys": "zxcvbnm,", "base": 60, "low": -12, "high": 12, "half": 1,
             "target": "三角洲|Delta Force|DeltaForce", "countdown": 5, "gate": 85}
