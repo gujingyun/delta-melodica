@@ -7,12 +7,12 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import mido
 from music import Mapping, Note, Song, compile_plan, fingerings, monophonic, parse_jianpu, read_midi, piano_melody, recommend_track
 from player import Player, release_time
-from win_input import INPUT, WindowsOutput, keyboard_event, target_matches, permission_problem, process_elevated
+from win_input import Hotkeys, INPUT, WindowsOutput, keyboard_event, target_matches, permission_problem, process_elevated
 
 
 class MusicTests(unittest.TestCase):
@@ -203,6 +203,38 @@ class PianoTests(unittest.TestCase):
 
 
 class InputTests(unittest.TestCase):
+    def test_adjustment_hotkeys_register_dispatch_and_release_only_owned_keys(self):
+        for failed in (None, 806):
+            with self.subTest(failed=failed):
+                actions, errors = [], []
+                messages = iter((None, 805, 806, 807, 808, None))
+                def peek(message, *_):
+                    identity = next(messages)
+                    if identity is None:
+                        return 0
+                    message._obj.message, message._obj.wParam = 0x0312, identity
+                    return 1
+                with patch("win_input.threading.Thread"), \
+                        patch("win_input.user32.PeekMessageW", side_effect=peek), \
+                        patch("win_input.user32.RegisterHotKey", side_effect=lambda _, identity, *args: identity != failed) as register, \
+                        patch("win_input.user32.UnregisterHotKey") as unregister:
+                    hotkeys = Hotkeys(lambda: None, lambda: None, errors.append,
+                                      speed=lambda step: actions.append(("speed", step)),
+                                      transpose=lambda step: actions.append(("transpose", step)))
+                    hotkeys.exit.wait = Mock(side_effect=(False, True))
+                    hotkeys._run()
+                    bindings = {call.args[1]: call.args[2:] for call in register.call_args_list}
+                    self.assertEqual([bindings[i] for i in (805, 806, 807, 808)],
+                                     [(0x4000, vk) for vk in (0x73, 0x74, 0x79, 0x7A)])
+                    expected = [("transpose", -1), ("transpose", 1), ("speed", -1), ("speed", 1)]
+                    if failed:
+                        expected.pop(1)
+                        self.assertIn("F5 注册失败", errors[0])
+                    else:
+                        self.assertEqual(errors, [])
+                    self.assertEqual(actions, expected)
+                    self.assertEqual({call.args[1] for call in unregister.call_args_list}, set(bindings)-{failed})
+
     def test_elevated_game_requires_matching_permission(self):
         self.assertIn("管理员", permission_problem(123, query=lambda pid=None: pid == 123))
         self.assertIsNone(permission_problem(123, query=lambda pid=None: True))
@@ -381,8 +413,9 @@ class PlayerTests(unittest.TestCase):
         self.player.seek(100, self.plan.duration)
         self.assertEqual(self.player.position, self.plan.duration)
 
-    def recorded_run(self, plan, start_at):
+    def recorded_run(self, plan, start_at, changes=()):
         clock, sent = [100.0], []
+        pending = list(changes)
         class RecordedOutput(FakeOutput):
             def begin(self, fingering):
                 sent.append((fingering.pitch, clock[0], "on"))
@@ -393,10 +426,109 @@ class PlayerTests(unittest.TestCase):
                     sent.append((None, clock[0], "off"))
                 super().release()
         output = RecordedOutput()
-        self.player._wait = lambda deadline, output=None: clock.__setitem__(0, max(clock[0], deadline))
+        def wait(deadline, output=None):
+            if pending and pending[0][0] <= deadline:
+                clock[0], replacement = pending.pop(0)
+                before = self.player.position/self.player.duration
+                self.player.update_plan(replacement)
+                self.assertAlmostEqual(self.player.position/self.player.duration, before)
+            else:
+                clock[0] = max(clock[0], deadline)
+        self.player._wait = wait
         with patch("player.time.perf_counter", side_effect=lambda: clock[0]):
             self.player._run(plan, lambda: output, 0, 0.85, start_at=start_at)
         return sent, clock[0]
+
+    def test_live_speed_changes_remaining_note_and_rest_without_retrigger(self):
+        song = parse_jianpu("1:2 2:2 0:2", 60)
+        plan = compile_plan(song, Mapping())
+        for speed, release, next_start, finished in ((2, 101.1, 101.25, 103.25), (0.5, 102.9, 103.5, 111.5)):
+            with self.subTest(speed=speed):
+                replacement = compile_plan(song, Mapping(), speed=speed)
+                sent, end = self.recorded_run(plan, 0, [(100.5, replacement)])
+                self.assertEqual([(pitch, action) for pitch, _, action in sent],
+                                 [(60, "on"), (None, "off"), (62, "on"), (None, "off")])
+                self.assertAlmostEqual(sent[1][1], release)
+                self.assertAlmostEqual(sent[2][1], next_start)
+                self.assertAlmostEqual(end, finished)
+
+    def test_live_transpose_releases_before_new_pitch_without_resetting_timing(self):
+        song = parse_jianpu("1:2 2", 60)
+        plan = compile_plan(song, Mapping())
+        replacement = compile_plan(song, Mapping(), transpose=1)
+        sent, end = self.recorded_run(plan, 0, [(100.5, replacement)])
+        self.assertEqual(sent[:3], [(60, 100.0, "on"), (None, 100.5, "off"), (61, 100.5, "on")])
+        self.assertAlmostEqual(sent[3][1], 101.7)
+        self.assertEqual(sent[4], (63, 102.0, "on"))
+        self.assertAlmostEqual(end, 103)
+
+    def test_slowing_in_legato_release_gap_does_not_replay_released_note(self):
+        song = parse_jianpu("1 1", 60)
+        plan = compile_plan(song, Mapping(), style="piano")
+        replacement = compile_plan(song, Mapping(), speed=0.25, style="piano")
+        sent, end = self.recorded_run(plan, 0, [(100.98, replacement)])
+        self.assertEqual([pitch for pitch, _, action in sent if action == "on"], [60, 60])
+        self.assertAlmostEqual(sent[1][1], 100.975)
+        self.assertAlmostEqual(sent[2][1], 101.06)
+        self.assertAlmostEqual(end, 105.06)
+
+    def test_speed_and_transpose_during_rest_keep_remaining_silence(self):
+        song = parse_jianpu("1 0:2 2", 60)
+        plan = compile_plan(song, Mapping())
+        replacement = compile_plan(song, Mapping(), speed=2, transpose=-12)
+        sent, end = self.recorded_run(plan, 0, [(101.5, replacement)])
+        self.assertEqual([pitch for pitch, _, action in sent if action == "on"], [60, 50])
+        self.assertAlmostEqual(sent[2][1], 102.25)
+        self.assertAlmostEqual(end, 102.75)
+
+    def test_countdown_uses_latest_plan_and_keeps_original_deadline(self):
+        self.player.start(self.plan, lambda: self.output, countdown=0.15, start_at=2)
+        replacement = compile_plan(parse_jianpu("1:8", 120), Mapping(), speed=2, transpose=1)
+        self.player.update_plan(replacement)
+        self.assertEqual(self.player.position, 1)
+        self.assertTrue(self.output.started.wait(0.5))
+        self.player.pause()
+        self.player.thread.join(0.5)
+        notes = [value[1] for kind, value in self.events if kind == "note"]
+        self.assertEqual(notes[0].fingering.pitch, 61)
+        self.assertTrue(self.player.paused)
+        self.assertTrue(self.output.closed)
+
+    def test_stop_after_live_changes_releases_and_wins_over_later_updates(self):
+        self.player.start(self.plan, lambda: self.output)
+        self.assertTrue(self.output.started.wait(1))
+        replacement = compile_plan(parse_jianpu("1:8", 120), Mapping(), speed=2, transpose=1)
+        self.player.update_plan(replacement)
+        self.player.stop()
+        self.player.update_plan(self.plan)
+        self.player.thread.join(0.5)
+        self.assertFalse(self.player.active)
+        self.assertTrue(self.output.closed)
+        self.assertFalse(self.output.held)
+        self.assertEqual(self.player.position, 0)
+        self.assertFalse(self.player.paused)
+
+    def test_live_change_still_releases_on_focus_loss_or_new_pitch_failure(self):
+        replacement = compile_plan(parse_jianpu("1:8", 120), Mapping(), transpose=1)
+        for failure in ("焦点切换", "换音失败"):
+            with self.subTest(failure=failure):
+                output = FakeOutput()
+                def begin(fingering):
+                    output.held = True
+                    output.started.set()
+                    if fingering.pitch == 61:
+                        raise OSError("换音失败")
+                output.begin = begin
+                self.player.start(self.plan, lambda: output)
+                self.assertTrue(output.started.wait(1))
+                if failure == "焦点切换":
+                    output.focus = False
+                self.player.update_plan(replacement)
+                self.player.thread.join(0.5)
+                self.assertFalse(self.player.active)
+                self.assertTrue(output.closed)
+                self.assertFalse(output.held)
+                self.assertIn(failure, self.events[-1][1][1])
 
     def test_resume_inside_note_plays_remaining_duration_only(self):
         plan = compile_plan(parse_jianpu("1 0 2:2 3 0", 60), Mapping(), style="piano")

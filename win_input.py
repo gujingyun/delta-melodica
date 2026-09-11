@@ -277,11 +277,12 @@ class PreviewOutput:
 
 
 class Hotkeys:
-    def __init__(self, toggle, stop, report, status=None, overlay=None, visibility=None):
+    def __init__(self, toggle, stop, report, status=None, overlay=None, visibility=None, speed=None, transpose=None):
         self.toggle, self.stop, self.report = toggle, stop, report
         self.status = status or (lambda text: None)
         self.overlay = overlay
         self.visibility = visibility
+        self.speed, self.transpose = speed, transpose
         self.exit = threading.Event()
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
@@ -294,10 +295,17 @@ class Hotkeys:
             message = wt.MSG()
             user32.PeekMessageW(ct.byref(message), None, 0, 0, 0)
             bindings = [(801, 0x77, "F8"), (802, 0x78, "F9")]
+            callbacks = {801: self.toggle, 802: self.stop, 803: self.overlay, 804: self.visibility}
             if self.overlay:
                 bindings.insert(0, (803, 0x76, "F7"))
             if self.visibility:
                 bindings.insert(0, (804, 0x75, "F6"))
+            if self.transpose:
+                bindings[0:0] = [(805, 0x73, "F4"), (806, 0x74, "F5")]
+                callbacks.update({805: lambda: self.transpose(-1), 806: lambda: self.transpose(1)})
+            if self.speed:
+                bindings.extend([(807, 0x79, "F10"), (808, 0x7A, "F11")])
+                callbacks.update({807: lambda: self.speed(-1), 808: lambda: self.speed(1)})
             for identity, vk, name in bindings:
                 if user32.RegisterHotKey(None, identity, 0x4000, vk):
                     registered.append(identity)
@@ -305,12 +313,12 @@ class Hotkeys:
                 else:
                     error = ct.get_last_error()
                     states.append(f"{name} 不可用")
-                    self.report(f"{name} 注册失败（错误码 {error}），可能被旧版助手或其他程序占用。请关闭其他助手窗口后重启；也可用界面上的播放和停止按钮。")
+                    self.report(f"{name} 注册失败（错误码 {error}），可能被旧版助手或其他程序占用。请关闭其他助手窗口后重启；也可用界面上的对应控件。")
             self.status(" · ".join(states))
             while not self.exit.wait(0.015):
                 while user32.PeekMessageW(ct.byref(message), None, 0, 0, 1):
                     if message.message == 0x0312 and message.wParam in registered:
-                        {801: self.toggle, 802: self.stop, 803: self.overlay, 804: self.visibility}[message.wParam]()
+                        callbacks[message.wParam]()
         finally:
             for identity in registered:
                 user32.UnregisterHotKey(None, identity)

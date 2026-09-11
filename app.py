@@ -31,6 +31,7 @@ ACCENT = "#b7f17c"
 LINE = "#304249"
 ORANGE = "#f1c077"
 PLAY_STYLES = {"钢琴适配 · 连奏": "piano", "原谱 · 分音": "original"}
+SPEEDS = ["0.25", "0.50", "0.75", "1.00", "1.25", "1.50", "2.00"]
 
 DEFAULTS = {"keys": "zxcvbnm,", "base": 60, "low": -12, "high": 12, "half": 1,
             "target": "三角洲|Delta Force|DeltaForce", "countdown": 5, "gate": 85}
@@ -53,7 +54,7 @@ class App:
         self.log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         self.log.addHandler(self.log_handler)
         self.elevated = process_elevated()
-        self.log.info("启动 三角洲口风琴 v0.6；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
+        self.log.info("启动 三角洲口风琴 v0.7；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
         self.settings = DEFAULTS.copy()
         self.load_error = None
         try:
@@ -80,6 +81,7 @@ class App:
         self.busy, self.closing = False, False
         self.speed = tk.StringVar(value="1.00")
         self.transpose = tk.StringVar(value="0")
+        self.plan_parameters = ("1.00", "0")
         self.arrangement = tk.StringVar(value="原谱 · 分音")
         self.track = tk.StringVar()
         self.title = tk.StringVar(value="选择一首音乐")
@@ -106,6 +108,8 @@ class App:
             lambda text: self.events.put(("hotkeys", text)),
             lambda: self.events.put(("overlay", None)),
             lambda: self.events.put(("overlay_visibility", None)),
+            speed=lambda step: self.events.put(("speed", step)),
+            transpose=lambda step: self.events.put(("transpose", step)),
         )
         self.root.protocol("WM_DELETE_WINDOW", self.hide_main)
         self.poll_timer = self.root.after(40, self._poll)
@@ -121,7 +125,7 @@ class App:
 
     def _build(self):
         root = self.root
-        root.title("三角洲口风琴 v0.6 · MIDI 自动演奏")
+        root.title("三角洲口风琴 v0.7 · MIDI 自动演奏")
         root.geometry("1120x850")
         root.minsize(1000, 830)
         root.configure(bg=BG)
@@ -155,7 +159,7 @@ class App:
             self.admin_button = ttk.Button(header, text="以管理员身份重启", command=self.elevate)
             self.admin_button.pack(side="right", padx=(0, 12))
             self.locked_widgets.append(self.admin_button)
-        tk.Label(header, text="v0.6 · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
+        tk.Label(header, text="v0.7 · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
 
         body = tk.Frame(root, bg=BG)
         body.pack(fill="both", expand=True, padx=28)
@@ -187,7 +191,7 @@ class App:
         fields.pack(fill="x", padx=22, pady=(0, 8))
         for column, (label, variable, values, width) in enumerate([
             ("演奏音轨", self.track, [], 26),
-            ("速度倍率", self.speed, ["0.25", "0.50", "0.75", "1.00", "1.25", "1.50", "2.00"], 8),
+            ("速度倍率", self.speed, SPEEDS, 8),
             ("移调 / 半音", self.transpose, list(range(-24, 25)), 7),
         ]):
             frame = tk.Frame(fields, bg=CARD)
@@ -195,11 +199,17 @@ class App:
             tk.Label(frame, text=label, bg=CARD, fg=MUTED, font=("Microsoft YaHei UI", 9)).pack(anchor="w", pady=(0, 6))
             combo = ttk.Combobox(frame, textvariable=variable, values=values, width=width, state="readonly")
             combo.pack(fill="x")
-            combo.bind("<<ComboboxSelected>>", lambda event: self.rebuild_plan())
-            self.locked_widgets.append(combo)
             if column == 0:
+                combo.bind("<<ComboboxSelected>>", lambda event: self.rebuild_plan())
+                self.locked_widgets.append(combo)
                 self.track_combo = combo
                 fields.columnconfigure(0, weight=1)
+            else:
+                combo.bind("<<ComboboxSelected>>", lambda event: self.rebuild_plan(preserve_position=True))
+                if column == 1:
+                    self.speed_combo = combo
+                else:
+                    self.transpose_combo = combo
 
         adaptation = tk.Frame(track_card, bg=CARD)
         adaptation.pack(fill="x", padx=22, pady=(0, 10))
@@ -258,8 +268,8 @@ class App:
         log_button = tk.Label(bottom, text="查看诊断日志", bg=BG, fg=ACCENT, cursor="hand2", font=("Microsoft YaHei UI", 9))
         log_button.pack(side="right")
         log_button.bind("<Button-1>", lambda event: self.show_log())
-        self.footer = tk.Label(root, text="F6 显隐　F7 操作　F8 暂停 / 继续　F9 停止归零　｜　拖动进度后按 F8 继续；关闭窗口后可从托盘退出",
-                 bg=BG, fg=MUTED, font=("Microsoft YaHei UI", 9))
+        self.footer = tk.Label(root, text="F4/F5 音调 −/+　F10/F11 速度 −/+　F6 显隐　F7 操作　F8 暂停/继续　F9 停止归零　｜　关闭后从托盘退出",
+                 bg=BG, fg=MUTED, justify="left", font=("Microsoft YaHei UI", 9))
         self.footer.pack(anchor="w", padx=28, pady=(5, 10))
 
     def check_permissions(self):
@@ -348,30 +358,54 @@ class App:
             self.draw_roll()
             messagebox.showerror("无法读取曲目", str(error), parent=self.root)
 
-    def rebuild_plan(self):
-        if not self.song or self.busy:
+    def rebuild_plan(self, preserve_position=False):
+        if not self.song or (self.busy and not preserve_position):
             return
         try:
-            self.plan = compile_plan(self.song, self.mapping(), self.track_ids[self.track_combo.current()],
-                                     float(self.speed.get()), int(self.transpose.get()), PLAY_STYLES[self.arrangement.get()])
-            self.transport_revision += 1
-            self.pending_play, self.seeking = None, False
-            self.player.stop()
+            plan = compile_plan(self.song, self.mapping(), self.track_ids[self.track_combo.current()],
+                                float(self.speed.get()), int(self.transpose.get()), PLAY_STYLES[self.arrangement.get()])
+            if preserve_position and self.restore_plan_after_test:
+                # 专用七音测试改参数后仍只演奏原来的七音。
+                plan.notes = plan.notes[:len(self.plan.notes)]
+                plan.duration = plan.notes[-1].end
+            if not preserve_position:
+                self.transport_revision += 1
+                self.pending_play, self.seeking = None, False
+                self.player.stop()
+                self.status.set("准备就绪")
+                self.detail.set("先试听，再进入游戏取出口风琴。按 F8 开始，F9 停止。")
+            self.player.update_plan(plan)
+            self.plan = plan
+            self.plan_parameters = (self.speed.get(), self.transpose.get())
+            self.current_note = None
             if self.plan.style == "piano":
                 self.stats.set(f"{len(self.plan.notes)} 个旋律音  ·  整理 {self.plan.cleaned} 个音段  ·  连接 {self.plan.bridged} 处间隙  ·  {self.plan.folded} 个音折回八度")
             else:
                 self.stats.set(f"{len(self.plan.notes)} 个旋律音段  ·  单音演奏  ·  {self.plan.folded} 个音段折回可演奏八度")
-            self.elapsed.set(f"00:00 / {clock_label(self.plan.duration)}")
-            self.progress["value"] = 0
-            self.status.set("准备就绪")
-            self.detail.set("先试听，再进入游戏取出口风琴。按 F8 开始，F9 停止。")
-            self.draw_roll()
+            self._update_progress()
             self.draw_keys()
             self._update_play_buttons()
         except (ValueError, IndexError) as error:
-            self.plan = None
-            self.status.set("请检查设置")
+            if preserve_position:
+                self.speed.set(self.plan_parameters[0])
+                self.transpose.set(self.plan_parameters[1])
+            else:
+                self.plan = None
+                self.status.set("请检查设置")
             self.detail.set(str(error))
+
+    def change_speed(self, step):
+        current = min(range(len(SPEEDS)), key=lambda i: abs(float(SPEEDS[i])-float(self.speed.get())))
+        value = SPEEDS[min(max(current+step, 0), len(SPEEDS)-1)]
+        if value != self.speed.get():
+            self.speed.set(value)
+            self.rebuild_plan(preserve_position=True)
+
+    def change_transpose(self, step):
+        value = str(min(24, max(-24, int(self.transpose.get())+step)))
+        if value != self.transpose.get():
+            self.transpose.set(value)
+            self.rebuild_plan(preserve_position=True)
 
     def import_midi(self):
         if self.busy:
@@ -640,6 +674,9 @@ class App:
                 elif kind == "overlay_visibility":
                     self.log.info("切换悬浮窗显示 / 隐藏")
                     self.overlay.toggle_visibility()
+                elif kind in ("speed", "transpose"):
+                    if not self.root.grab_current():
+                        (self.change_speed if kind == "speed" else self.change_transpose)(value)
                 elif kind == "show_main":
                     self.show_main()
                 elif kind == "stop":
@@ -676,6 +713,8 @@ class App:
                     self.status.set(self.playing_mode + "中")
                 elif kind == "note":
                     index, note = value
+                    if not self.plan or index >= len(self.plan.notes) or note is not self.plan.notes[index]:
+                        continue
                     self.current_note = note
                     self.detail.set(f"{index+1} / {len(self.plan.notes)}　{pitch_name(note.fingering.pitch)}　按键：{note.fingering.label}　｜　F9 停止")
                     self.draw_keys()

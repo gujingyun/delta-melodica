@@ -206,7 +206,8 @@ class Overlay:
         c.delete("all")
         self.regions = []
         self._text(16, 21, "三角洲口风琴", ACCENT, 11, True)
-        self._text(422, 21, "拖动标题移动" if self.editing else "F7 打开操作", MUTED, 9, anchor="e")
+        parameters = f"{self.app.speed.get()} 倍 · {int(self.app.transpose.get()):+d} 半音"
+        self._text(422, 21, parameters + (" · 拖动移动" if self.editing else " · F7 操作"), MUTED, 9, anchor="e")
         title = self.app.title.get()
         self._text(16, 54, title[:19] + ("…" if len(title) > 19 else ""), size=15, bold=True)
         self._text(16, 84, self.app.status.get()[:27], ACCENT, 10)
@@ -241,9 +242,9 @@ class Overlay:
             name = self.app.entries[index][0]
             label = ("● " if selected and selected[0] == index else "   ") + name[:26]
             self._button(16, 235+row*30, 408, 27, label, lambda i=index: self.select(i), ready)
-        self._button(16, 363, 100, 29, "速度 −", lambda: self.change_speed(-1), ready)
+        self._button(16, 363, 100, 29, "速度 −", lambda: self.change_speed(-1))
         self._text(169, 378, self.app.speed.get()+" 倍", TEXT, 10, anchor="center")
-        self._button(220, 363, 100, 29, "速度 +", lambda: self.change_speed(1), ready)
+        self._button(220, 363, 100, 29, "速度 +", lambda: self.change_speed(1))
         self._button(330, 363, 94, 29, f"不透明 {round(self.alpha*100)}%", self.change_alpha)
         self._button(16, 402, 128, 31, "打开主窗口", self.open_main)
         self._button(156, 402, 128, 31, "隐藏悬浮窗", self.disable)
@@ -263,10 +264,7 @@ class Overlay:
         self.draw()
 
     def change_speed(self, step):
-        speeds = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2]
-        current = min(range(len(speeds)), key=lambda i: abs(speeds[i]-float(self.app.speed.get())))
-        self.app.speed.set(f"{speeds[min(max(current+step, 0), len(speeds)-1)]:.2f}")
-        self.app.rebuild_plan()
+        self.app.change_speed(step)
         self.draw()
 
     def change_alpha(self):
