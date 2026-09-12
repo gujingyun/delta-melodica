@@ -11,9 +11,12 @@ import queue
 import re
 import shutil
 import sys
+import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+import urllib.request
 import uuid
+import webbrowser
 
 from music import (DEMO_SCORES, Mapping, compile_plan, parse_jianpu, pitch_name, read_midi,
                    recommend_track, validate_segments, segment_source_position)
@@ -34,6 +37,9 @@ LINE = "#304249"
 ORANGE = "#f1c077"
 PLAY_STYLES = {"钢琴适配 · 连奏": "piano", "原谱 · 分音": "original"}
 SPEEDS = ["0.25", "0.50", "0.75", "1.00", "1.25", "1.50", "1.75", "2.00"]
+APP_VERSION = "0.10"
+UPDATE_MANIFEST_URL = "https://aiygzn.top/melodica/version.json"
+UPDATE_PAGE_URL = "https://aiygzn.top/melodica/"
 
 DEFAULTS = {"keys": "zxcvbnm,", "base": 60, "low": -12, "high": 12, "half": 1,
             "target": "三角洲|Delta Force|DeltaForce", "countdown": 5, "gate": 85}
@@ -62,6 +68,38 @@ def parse_clock(text):
     return seconds
 
 
+def parse_version(value):
+    """解析由数字和点组成的版本号，兼容 v0.10 这种展示形式。"""
+    if not isinstance(value, str):
+        raise ValueError("版本号必须是文本")
+    value = value.strip()
+    if not re.fullmatch(r"v?\d+(?:\.\d+)*", value, re.IGNORECASE):
+        raise ValueError(f"版本号格式不正确：{value or '空'}")
+    return tuple(int(part) for part in value.lstrip("vV").split("."))
+
+
+def parse_update_manifest(payload):
+    """校验官网版本清单，只保留更新提示所需字段。"""
+    if not isinstance(payload, dict):
+        raise ValueError("版本清单格式不正确")
+    version = payload.get("version")
+    version_tuple = parse_version(version)
+    notes = payload.get("notes", "")
+    if notes is None:
+        notes = ""
+    if not isinstance(notes, str):
+        raise ValueError("版本说明格式不正确")
+    return {"version": version.lstrip("vV"), "version_tuple": version_tuple, "notes": notes.strip()}
+
+
+def fetch_update_manifest(url=UPDATE_MANIFEST_URL):
+    """从官网读取版本清单，网络请求只应在线程中调用。"""
+    request = urllib.request.Request(url, headers={"User-Agent": f"DeltaMelodica/{APP_VERSION}"})
+    with urllib.request.urlopen(request, timeout=5) as response:
+        payload = json.loads(response.read(64 * 1024).decode("utf-8"))
+    return parse_update_manifest(payload)
+
+
 class App:
     def __init__(self, root, data_dir, smoke=False, game_test=False):
         self.root, self.data_dir, self.smoke = root, Path(data_dir), smoke
@@ -75,7 +113,7 @@ class App:
         self.log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         self.log.addHandler(self.log_handler)
         self.elevated = process_elevated()
-        self.log.info("启动 三角洲口风琴 v0.10；PID=%s；管理员权限=%s", os.getpid(), self.elevated)
+        self.log.info("启动 三角洲口风琴 v%s；PID=%s；管理员权限=%s", APP_VERSION, os.getpid(), self.elevated)
         self.settings = DEFAULTS.copy()
         self.load_error = None
         try:
@@ -110,6 +148,7 @@ class App:
         self.seek_revision = 0
         self.restore_plan_after_test = False
         self.busy, self.closing = False, False
+        self.update_checking = False
         self.speed = tk.StringVar(value="1.00")
         self.transpose = tk.StringVar(value="0")
         self.plan_parameters = ("1.00", "0")
@@ -149,6 +188,7 @@ class App:
         self.poll_timer = self.root.after(40, self._poll)
         if not smoke:
             self.root.after(300, self.check_permissions)
+            self.root.after(1000, lambda: self.check_updates(automatic=True))
         if game_test:
             self.root.after(1000, lambda: self.play(False))
         if self.load_error:
@@ -159,7 +199,7 @@ class App:
 
     def _build(self):
         root = self.root
-        root.title("三角洲口风琴 v0.10 · MIDI 自动演奏")
+        root.title(f"三角洲口风琴 v{APP_VERSION} · MIDI 自动演奏")
         root.geometry("1120x850")
         root.minsize(1000, 830)
         root.configure(bg=BG)
@@ -188,12 +228,14 @@ class App:
         settings = ttk.Button(header, text="键位与设置", command=self.settings_dialog)
         settings.pack(side="right")
         self.locked_widgets.append(settings)
+        self.update_button = ttk.Button(header, text="检查更新", command=self.check_updates)
+        self.update_button.pack(side="right", padx=(0, 12))
         ttk.Button(header, text="悬浮窗操作  F7", command=lambda: self.overlay.begin_edit()).pack(side="right", padx=(0, 12))
         if self.elevated is not True:
             self.admin_button = ttk.Button(header, text="以管理员身份重启", command=self.elevate)
             self.admin_button.pack(side="right", padx=(0, 12))
             self.locked_widgets.append(self.admin_button)
-        tk.Label(header, text="v0.10 · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
+        tk.Label(header, text=f"v{APP_VERSION} · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
 
         body = tk.Frame(root, bg=BG)
         body.pack(fill="both", expand=True, padx=28)
@@ -334,6 +376,38 @@ class App:
                 self.status.set("需要与游戏使用相同权限")
                 self.detail.set(problem)
                 return
+
+    def check_updates(self, automatic=False):
+        """在线程中检查官网版本，结果回到 Tk 主线程处理。"""
+        if self.closing:
+            return
+        if self.update_checking:
+            if not automatic:
+                self.detail.set("正在检查更新，请稍候。")
+            return
+        self.update_checking = True
+        if not automatic:
+            self.status.set("正在检查更新")
+            self.detail.set("正在连接官网读取版本信息…")
+        self.log.info("开始%s检查更新", "自动" if automatic else "手动")
+        threading.Thread(target=self._check_updates, args=(automatic,), daemon=True).start()
+
+    def _check_updates(self, automatic):
+        try:
+            manifest = fetch_update_manifest()
+            self.events.put(("update_result", (automatic, manifest, None)))
+        except Exception as error:
+            self.events.put(("update_result", (automatic, None, error)))
+
+    def _show_update_notice(self, manifest):
+        version = manifest["version"]
+        notes = manifest["notes"]
+        message = f"发现新版本 v{version}，当前版本为 v{APP_VERSION}。"
+        if notes:
+            message += f"\n\n更新说明：\n{notes}"
+        message += "\n\n是否打开官网查看并下载？"
+        if messagebox.askyesno("发现新版本", message, parent=self.root):
+            webbrowser.open(UPDATE_PAGE_URL)
 
     def elevate(self):
         if self.busy:
@@ -1116,6 +1190,27 @@ class App:
                     self.status.set("系统托盘不可用")
                     self.detail.set("暂时保留主窗口，请用下方“退出程序”结束运行。" + value)
                     self.exit_button.pack(side="right", padx=12)
+                elif kind == "update_result":
+                    automatic, manifest, error = value
+                    self.update_checking = False
+                    if error:
+                        self.log.warning("检查更新失败：%s", error)
+                        if not automatic:
+                            self.status.set("检查更新失败")
+                            self.detail.set("无法连接官网，请稍后重试。")
+                            messagebox.showwarning("检查更新失败", f"暂时无法读取版本信息：\n{error}", parent=self.root)
+                        continue
+                    if manifest["version_tuple"] <= parse_version(APP_VERSION):
+                        self.log.info("当前已是最新版本 v%s", APP_VERSION)
+                        if not automatic:
+                            self.status.set("已是最新版本")
+                            self.detail.set(f"当前使用 v{APP_VERSION}，官网没有更新版本。")
+                            messagebox.showinfo("检查更新", f"当前已是最新版本 v{APP_VERSION}。", parent=self.root)
+                        continue
+                    self.log.info("发现新版本 v%s", manifest["version"])
+                    self.status.set(f"发现新版本 v{manifest['version']}")
+                    self.detail.set("官网已有更新版本，点击提示框即可打开下载页面。")
+                    self._show_update_notice(manifest)
                 elif kind == "warning":
                     self.log.warning(value)
                     self.detail.set(value)
