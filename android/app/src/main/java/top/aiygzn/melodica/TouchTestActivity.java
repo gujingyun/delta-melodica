@@ -40,7 +40,11 @@ public final class TouchTestActivity extends Activity {
             });
         }
     }
-    private void update(String last) { state.setText("按下 " + downs + " / 抬起 " + ups + " / 取消 " + cancels + " / 按住 " + held.size() + "\n" + last); }
+    private void update(String last) {
+        String value = "按下 " + downs + " / 抬起 " + ups + " / 取消 " + cancels + " / 按住 " + held.size() + "\n" + last;
+        state.setText(value);
+        android.util.Log.i("MelodicaTouchTest", value.replace('\n', ' '));
+    }
     @Override protected void onResume() { super.onResume(); active = true; }
     @Override protected void onPause() { active = false; if (MelodicaService.instance != null) MelodicaService.instance.pause("已离开本地测试键盘"); super.onPause(); }
 }

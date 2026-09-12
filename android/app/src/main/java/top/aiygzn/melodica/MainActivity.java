@@ -40,6 +40,10 @@ public final class MainActivity extends Activity {
     private TextView serviceStatus, songInfo, targetInfo;
     private LinearLayout content;
     private boolean refreshing;
+    private final android.os.Handler statusHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable refreshStatus = new Runnable() {
+        @Override public void run() { if (!isDestroyed()) { updateStatus(); statusHandler.postDelayed(this, 700); } }
+    };
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState); settings = new top.aiygzn.melodica.Settings(this); library = new Library(this);
         ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true);
@@ -135,7 +139,8 @@ public final class MainActivity extends Activity {
     private void prepare() { if (selected != null && MelodicaService.instance != null) MelodicaService.instance.load(selected); }
     private boolean service() { if (MelodicaService.instance != null) return true; toast("请先开启无障碍演奏服务"); return false; }
     private void toast(String text) { android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_LONG).show(); }
-    @Override protected void onResume() { super.onResume(); if (settings != null) updateStatus(); }
+    @Override protected void onResume() { super.onResume(); if (settings != null) { statusHandler.removeCallbacks(refreshStatus); statusHandler.post(refreshStatus); } }
+    @Override protected void onPause() { statusHandler.removeCallbacks(refreshStatus); super.onPause(); }
     private void updateStatus() {
         serviceStatus.setText(MelodicaService.instance != null ? "●  演奏服务已连接" : "○  演奏服务未开启");
         targetInfo.setText(settings.target().isEmpty() ? "还没有音键校准记录" : "已绑定：" + settings.target() + "\n校准画面：" + settings.width() + " × " + settings.height());

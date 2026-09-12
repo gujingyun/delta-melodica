@@ -47,8 +47,10 @@ public final class MelodicaService extends AccessibilityService {
     private Transport transport;
     private String message = "选择曲目后，进入游戏校准音键";
     private GestureDescription.StrokeDescription[] held;
+    private PointF[] anchors, endpoints;
     private boolean inFlight, destroyed;
     private long gestureSerial;
+    private long cancelledAt;
     private int heldIndex = -1;
     private final Runnable pumpTask = this::pump;
     private final Runnable watchdog = () -> fail("触摸回调超时，已关闭服务，请重新开启");
@@ -62,7 +64,7 @@ public final class MelodicaService extends AccessibilityService {
     };
     @Override protected void onServiceConnected() {
         instance = this; settings = new Settings(this); windows = (WindowManager) getSystemService(WINDOW_SERVICE);
-        try { load(new Library(this).read(settings.selected()).melody(new Library(this).read(settings.selected()).recommendedTrack())); }
+        try { Score stored = new Library(this).read(settings.selected()); load(stored.melody(stored.recommendedTrack())); }
         catch (Exception e) { load(Score.jianpu(Score.STAR, 100, "小星星")); }
         showPanel(); handler.post(heartbeat);
     }
@@ -148,6 +150,8 @@ public final class MelodicaService extends AccessibilityService {
     public void toggle() {
         if (transport == null || calibration != null) return;
         if (transport.active()) { pause("已暂停"); return; }
+        // 手指点悬浮按钮时系统会先取消演奏手势，避免该次抬手又触发继续。
+        if (transport.state == Transport.State.PAUSED && SystemClock.uptimeMillis() - cancelledAt < 400) return;
         if (inFlight || held != null) { notifyUser("正在释放触摸，请稍后重试"); return; }
         if (!ready()) { notifyUser("请进入已校准的目标窗口；首次使用或旋转屏幕后需校准"); return; }
         try {
@@ -194,16 +198,28 @@ public final class MelodicaService extends AccessibilityService {
         if (held == null) {
             int[] ids = settings.fingering(n.pitch).points();
             held = new GestureDescription.StrokeDescription[ids.length]; heldIndex = index;
+            anchors = new PointF[ids.length]; endpoints = new PointF[ids.length];
             for (int i = 0; i < ids.length; i++) {
                 PointF p = settings.point(ids[i]);
                 if (p == null || covers(p)) { held = null; pause("音键被遮挡或校准已失效"); return; }
-                Path path = new Path(); path.moveTo(p.x, p.y);
+                anchors[i] = p; endpoints[i] = p;
+                Path path = holdPath(i, more);
                 held[i] = new GestureDescription.StrokeDescription(path, 0, slice, more);
             }
         } else {
-            for (int i = 0; i < held.length; i++) held[i] = held[i].continueStroke(held[i].getPath(), 0, slice, more);
+            for (int i = 0; i < held.length; i++) held[i] = held[i].continueStroke(holdPath(i, more), 0, slice, more);
         }
         dispatch(held, more);
+    }
+    private Path holdPath(int index, boolean move) {
+        PointF start = endpoints[index], anchor = anchors[index];
+        Path path = new Path(); path.moveTo(start.x, start.y);
+        if (move) {
+            // 完全静止的续接会被系统合并为空事件；在键心附近往返一个像素保持长按。
+            float x = start.x == anchor.x ? anchor.x + (anchor.x + 1 < settings.width() ? 1 : -1) : anchor.x;
+            path.lineTo(x, anchor.y); endpoints[index] = new PointF(x, anchor.y);
+        }
+        return path;
     }
     private long releaseAt(Score.Note n) { return n.end - Math.min(25, Math.max(1, (n.end - n.start) / 10)); }
     private int findNote(long position) {
@@ -214,7 +230,7 @@ public final class MelodicaService extends AccessibilityService {
     private void release() {
         if (inFlight || held == null) { if (transport != null && transport.active() && !inFlight) schedule(0); return; }
         GestureDescription.StrokeDescription[] ending = new GestureDescription.StrokeDescription[held.length];
-        for (int i = 0; i < held.length; i++) ending[i] = held[i].continueStroke(held[i].getPath(), 0, 1, false);
+        for (int i = 0; i < held.length; i++) ending[i] = held[i].continueStroke(holdPath(i, false), 0, 1, false);
         dispatch(ending, false);
     }
     private void dispatch(GestureDescription.StrokeDescription[] strokes, boolean continued) {
@@ -233,6 +249,7 @@ public final class MelodicaService extends AccessibilityService {
                 @Override public void onCancelled(GestureDescription gesture) {
                     if (destroyed || serial != gestureSerial) return;
                     handler.removeCallbacks(watchdog); inFlight = false; held = null; heldIndex = -1;
+                    cancelledAt = SystemClock.uptimeMillis();
                     pause("触摸被系统或手动操作中断，已暂停");
                 }
             }, handler);

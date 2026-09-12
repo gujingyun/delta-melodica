@@ -27,6 +27,8 @@
 
 手势只在校准的目标应用处于前台、屏幕解锁且尺寸和方向一致时开始。切出、锁屏、旋转或系统取消手势会暂停。音符按不超过 60 毫秒的片段连续长按，暂停或停止后在当前短段回调时释放；系统调度可能增加延迟，不能承诺固定上限。接口拒绝或回调超时会关闭服务，由系统清理该服务的触摸序列。
 
+为避免系统将静止的续接手势合并为空事件，长按在音键中心附近往返 1 个屏幕像素；校准时应点按钮中心，避免边缘。点击悬浮暂停按钮时，系统可能先取消当前手势，助手会保留暂停状态。
+
 窗口包名仅用于前台确认。不读取窗口文字、不截图、无网络权限，不进行游戏进程读取或修改。曲库和校准保存在应用私有目录；卸载会移除。测试键盘校准不会用于游戏窗口，返回主界面也不会触发测试音键。
 
 ## 构建与验证
@@ -34,12 +36,28 @@
 使用 Android Studio 自带的 JDK 21，安装 Android SDK Platform 34 与 Build Tools 36.0.0。设置 `JAVA_HOME` 和 `ANDROID_HOME`，或在本目录不入库的 `local.properties` 中指定 `sdk.dir`。
 
 ```powershell
-.\gradlew.bat testDebugUnitTest assembleDebug lintDebug
+.\build.ps1 -JavaHome '你的 JDK 21 目录' -SdkRoot '你的 Android SDK 目录'
 ```
 
 项目固定 Gradle 9.2.1 和 Android Gradle Plugin 9.0.1。Java 源码采用 UTF-8；Gradle 进程采用 `file.encoding=COMPAT`，使 Windows 中文路径的测试进程参数文件与系统编码一致。APK 位于 `app\build\outputs\apk\debug\app-debug.apk`，为本地测试签名的预览包。
 
+构建脚本先执行 `clean testDebugUnitTest assembleDebug lintDebug`，成功后复制到仓库根目录 `dist\三角洲口风琴_安卓_v0.1预览版.apk`，并输出 SHA-256。使用完整清理构建，避免增量打包残留旧 dex。
+
 10 项核心测试覆盖简谱时值、休止与非法输入、八度折回和半音检查、旋律整理、跨轨速度表、连续 MIDI 状态、打击乐过滤、暂停续播和倒计时取消。
+
+设备触摸回归需要专用 Android 10+ 测试设备或模拟器，先安装应用并开启本应用的无障碍服务：
+
+```powershell
+.\gradlew.bat assembleDebugAndroidTest
+adb -s 你的测试设备序列号 install -r .\app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk
+adb -s 你的测试设备序列号 shell am instrument -w -r top.aiygzn.melodica.test/top.aiygzn.melodica.GestureSmokeTest
+```
+
+此入口会打开应用自建测试键盘，临时校准并执行触摸，结束后恢复曲库选择和校准设置。它不会进入三角洲手游；只重连原本已开启的本应用无障碍服务。成功时输出各项「通过」和 `INSTRUMENTATION_CODE: -1`；仅 adb 返回码为 0 不能判断测试成功。普通 `uiautomator dump` 会暂时抑制其他无障碍服务，不应在演奏过程中用它验证状态。
+
+![安卓主界面](docs/main.png)
+
+![完整演奏后的触摸计数](docs/touch-complete.png)
 
 ## 平台接口依据
 
