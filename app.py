@@ -20,6 +20,8 @@ import webbrowser
 
 from music import (DEMO_SCORES, Mapping, compile_plan, parse_jianpu, pitch_name, read_midi,
                    recommend_track, validate_segments, segment_source_position)
+from online_library import (ONLINE_CATALOG_URL, OnlineSong, download_online_song,
+                            fetch_catalog)
 from player import Player
 from overlay import Overlay
 from tray import Tray
@@ -37,7 +39,7 @@ LINE = "#304249"
 ORANGE = "#f1c077"
 PLAY_STYLES = {"钢琴适配 · 连奏": "piano", "原谱 · 分音": "original"}
 SPEEDS = ["0.25", "0.50", "0.75", "1.00", "1.25", "1.50", "1.75", "2.00"]
-APP_VERSION = "0.10"
+APP_VERSION = "0.11"
 UPDATE_MANIFEST_URL = "https://aiygzn.top/melodica/version.json"
 UPDATE_PAGE_URL = "https://aiygzn.top/melodica/"
 
@@ -149,6 +151,15 @@ class App:
         self.restore_plan_after_test = False
         self.busy, self.closing = False, False
         self.update_checking = False
+        self.online_catalog = []
+        self.online_catalog_dialog = None
+        self.online_catalog_list = None
+        self.online_catalog_status = None
+        self.online_catalog_detail = None
+        self.online_download_button = None
+        self.online_operation = None
+        self.online_operation_kind = None
+        self.online_downloaded_ids = set()
         self.speed = tk.StringVar(value="1.00")
         self.transpose = tk.StringVar(value="0")
         self.plan_parameters = ("1.00", "0")
@@ -254,6 +265,9 @@ class App:
             button = ttk.Button(sidebar, text=text, command=command)
             button.pack(fill="x", padx=18, pady=(0, 12))
             self.locked_widgets.append(button)
+        self.online_button = ttk.Button(sidebar, text="☁  线上曲库", command=self.online_library_dialog)
+        self.online_button.pack(fill="x", padx=18, pady=(0, 12))
+        self.locked_widgets.append(self.online_button)
         self.delete_button = ttk.Button(sidebar, text="删除选中曲目", command=self.delete_song)
         self.delete_button.pack(fill="x", padx=18, pady=(0, 12))
         self.locked_widgets.append(self.delete_button)
@@ -430,6 +444,121 @@ class App:
         viewer.insert("1.0", (self.data_dir / "diagnostic.log").read_text(encoding="utf-8")[-20000:])
         viewer.configure(state="disabled")
         viewer.see("end")
+
+    def _online_dialog_alive(self):
+        return self.online_catalog_dialog and self.online_catalog_dialog.winfo_exists()
+
+    def online_library_dialog(self):
+        """打开线上曲库，目录读取和 MIDI 下载均不阻塞主界面。"""
+        if self.busy:
+            return
+        if self._online_dialog_alive():
+            self.online_catalog_dialog.lift()
+            return self.online_catalog_dialog
+        dialog = self._dialog("线上曲库", "760x620")
+        dialog.minsize(700, 540)
+        self.online_catalog_dialog = dialog
+        tk.Label(dialog, text="从官网曲库下载 MIDI", bg=CARD, fg=TEXT,
+                 font=("Microsoft YaHei UI", 15, "bold")).pack(anchor="w", padx=22, pady=(20, 4))
+        tk.Label(dialog, text="选择曲目后下载到本地曲库；网络不可用时不影响已有曲目播放。",
+                 bg=CARD, fg=MUTED).pack(anchor="w", padx=22, pady=(0, 14))
+        body = tk.Frame(dialog, bg=CARD)
+        body.pack(fill="both", expand=True, padx=22)
+        self.online_catalog_list = tk.Listbox(
+            body, bg=DEEP, fg=TEXT, selectbackground="#354a38", selectforeground=ACCENT,
+            highlightthickness=0, bd=0, activestyle="none", exportselection=False,
+            font=("Microsoft YaHei UI", 11), width=34)
+        self.online_catalog_list.pack(side="left", fill="both", expand=True)
+        self.online_catalog_list.bind("<<ListboxSelect>>", self._select_online_song)
+        self.online_catalog_list.bind("<Double-Button-1>", lambda event: self.download_online_selected())
+        detail_frame = tk.Frame(body, bg=CARD, width=300)
+        detail_frame.pack(side="left", fill="both", expand=True, padx=(18, 0))
+        detail_frame.pack_propagate(False)
+        self.online_catalog_detail = tk.StringVar(value="正在读取线上曲库…")
+        tk.Label(detail_frame, textvariable=self.online_catalog_detail, bg=CARD, fg=MUTED,
+                 justify="left", anchor="nw", wraplength=300).pack(fill="both", expand=True, anchor="nw")
+        self.online_catalog_status = tk.StringVar(value="")
+        tk.Label(dialog, textvariable=self.online_catalog_status, bg=CARD, fg=ORANGE,
+                 anchor="w", justify="left", wraplength=700).pack(fill="x", padx=22, pady=(12, 4))
+        actions = tk.Frame(dialog, bg=CARD)
+        actions.pack(fill="x", padx=22, pady=(6, 20))
+        ttk.Button(actions, text="刷新目录", command=self.refresh_online_catalog).pack(side="left")
+        self.online_download_button = ttk.Button(actions, text="下载到本地曲库",
+                                                 command=self.download_online_selected,
+                                                 style="Accent.TButton")
+        self.online_download_button.pack(side="right")
+        ttk.Button(actions, text="关闭", command=self._close_online_library_dialog).pack(side="right", padx=(0, 10))
+        dialog.protocol("WM_DELETE_WINDOW", self._close_online_library_dialog)
+        self.refresh_online_catalog()
+        return dialog
+
+    def _close_online_library_dialog(self):
+        if not self._online_dialog_alive():
+            return
+        self.online_operation = None
+        self.online_operation_kind = None
+        self.online_catalog_dialog.destroy()
+        self.online_catalog_dialog = None
+        self.online_catalog_list = None
+        self.online_catalog_status = None
+        self.online_catalog_detail = None
+        self.online_download_button = None
+
+    def refresh_online_catalog(self):
+        if not self._online_dialog_alive() or self.online_operation:
+            return
+        token = uuid.uuid4().hex
+        self.online_operation, self.online_operation_kind = token, "catalog"
+        self.online_catalog_status.set("正在连接官网读取曲目目录…")
+        self.online_catalog_list.configure(state="disabled")
+        self.online_download_button.configure(state="disabled")
+        threading.Thread(target=self._fetch_online_catalog, args=(token,), daemon=True).start()
+
+    def _fetch_online_catalog(self, token):
+        try:
+            songs = fetch_catalog(ONLINE_CATALOG_URL)
+            self.events.put(("online_catalog_result", (token, songs, None)))
+        except Exception as error:
+            self.events.put(("online_catalog_result", (token, None, error)))
+
+    def _select_online_song(self, event=None):
+        if not self.online_catalog_list or not self.online_catalog_detail:
+            return
+        selection = self.online_catalog_list.curselection()
+        if not selection or selection[0] >= len(self.online_catalog):
+            self.online_catalog_detail.set("请选择一首曲目。")
+            return
+        song = self.online_catalog[selection[0]]
+        lines = [song.title]
+        if song.artist:
+            lines.append(f"作者：{song.artist}")
+        if song.description:
+            lines.extend(["", song.description])
+        lines.extend(["", "已下载到本地曲库" if song.song_id in self.online_downloaded_ids else "尚未下载"])
+        self.online_catalog_detail.set("\n".join(lines))
+        self.online_download_button.configure(state="normal" if not self.online_operation else "disabled")
+
+    def download_online_selected(self):
+        if self.busy or not self._online_dialog_alive() or self.online_operation:
+            return
+        selection = self.online_catalog_list.curselection()
+        if not selection or selection[0] >= len(self.online_catalog):
+            self.online_catalog_status.set("请先选择一首线上曲目。")
+            return
+        song = self.online_catalog[selection[0]]
+        token = uuid.uuid4().hex
+        self.online_operation, self.online_operation_kind = token, "download"
+        self.online_catalog_status.set(f"正在下载“{song.title}”…")
+        self.online_catalog_list.configure(state="disabled")
+        self.online_download_button.configure(state="disabled")
+        threading.Thread(target=self._download_online_song, args=(token, song), daemon=True).start()
+
+    def _download_online_song(self, token, song: OnlineSong):
+        try:
+            path = download_online_song(song, self.library_dir)
+            self.events.put(("online_download_result", (token, song, path, None)))
+        except Exception as error:
+            self.events.put(("online_download_result", (token, song, None, error)))
 
     def _load_library(self, select_path=None):
         self.entries = [(name, ("demo", name)) for name in DEMO_SCORES]
@@ -1190,6 +1319,55 @@ class App:
                     self.status.set("系统托盘不可用")
                     self.detail.set("暂时保留主窗口，请用下方“退出程序”结束运行。" + value)
                     self.exit_button.pack(side="right", padx=12)
+                elif kind == "online_catalog_result":
+                    token, songs, error = value
+                    if token != self.online_operation or self.online_operation_kind != "catalog":
+                        continue
+                    self.online_operation = self.online_operation_kind = None
+                    if not self._online_dialog_alive():
+                        continue
+                    self.online_catalog_list.configure(state="normal")
+                    if error:
+                        self.log.warning("读取线上曲库失败：%s", error)
+                        self.online_catalog = []
+                        self.online_catalog_list.delete(0, "end")
+                        self.online_catalog_status.set("无法读取线上曲库，请检查网络后点击“刷新目录”重试。")
+                        self.online_catalog_detail.set(str(error))
+                        self.online_download_button.configure(state="disabled")
+                        continue
+                    self.online_catalog = songs
+                    self.online_catalog_list.delete(0, "end")
+                    for song in songs:
+                        label = song.title + (f"  ·  {song.artist}" if song.artist else "")
+                        self.online_catalog_list.insert("end", "  " + label)
+                    self.online_catalog_status.set(f"已读取 {len(songs)} 首曲目。双击或选择后点击下载。")
+                    if songs:
+                        self.online_catalog_list.selection_set(0)
+                        self.online_catalog_list.see(0)
+                        self._select_online_song()
+                    else:
+                        self.online_catalog_detail.set("官网暂时没有可下载的曲目。")
+                        self.online_download_button.configure(state="disabled")
+                elif kind == "online_download_result":
+                    token, song, path, error = value
+                    if token != self.online_operation or self.online_operation_kind != "download":
+                        continue
+                    self.online_operation = self.online_operation_kind = None
+                    if error:
+                        self.log.warning("下载线上曲目失败：%s；曲目=%s", error, song.title)
+                        if self._online_dialog_alive():
+                            self.online_catalog_list.configure(state="normal")
+                            self.online_catalog_status.set(f"下载“{song.title}”失败：{error}")
+                            self._select_online_song()
+                        continue
+                    self.online_downloaded_ids.add(song.song_id)
+                    if self._online_dialog_alive():
+                        self.online_catalog_list.configure(state="normal")
+                        self.online_catalog_status.set(f"已下载“{song.title}”，已加入本地曲库。")
+                        self._select_online_song()
+                    self.log.info("线上曲目已下载：标题=%s；文件=%s", song.title, path)
+                    self._load_library(path)
+                    self.detail.set(f"已从线上曲库下载“{song.title}”。")
                 elif kind == "update_result":
                     automatic, manifest, error = value
                     self.update_checking = False
@@ -1336,6 +1514,7 @@ class App:
         if self.closing:
             return
         self.closing = True
+        self._close_online_library_dialog()
         self.root.after_cancel(self.poll_timer)
         self.player.close()
         self.overlay.close()
