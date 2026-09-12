@@ -1,42 +1,5 @@
 {
   "version": 1,
   "updated_at": "2026-09-12",
-  "songs": [
-    {
-      "id": "little-stars",
-      "title": "小星星",
-      "artist": "三角洲口风琴示例",
-      "description": "适合第一次下载和试听的入门旋律。",
-      "url": "songs/%E5%B0%8F%E6%98%9F%E6%98%9F.mid",
-      "size": 421,
-      "sha256": "0970FB5FD7ED978ACCFB3B6A670DAC297DC13738D3105C62342024398EA66E73"
-    },
-    {
-      "id": "ode-to-joy",
-      "title": "欢乐颂",
-      "artist": "三角洲口风琴示例",
-      "description": "短小清晰的练习曲，下载后可直接本机试听。",
-      "url": "songs/%E6%AC%A2%E4%B9%90%E9%A2%82.mid",
-      "size": 313,
-      "sha256": "6006279EE0AE06E798D2A5A95FE31785F41FDE9D3FC8990BB0F7123CB6F85752"
-    },
-    {
-      "id": "two-tigers",
-      "title": "两只老虎",
-      "artist": "三角洲口风琴示例",
-      "description": "包含重复乐句，适合检查暂停、定位和重复音。",
-      "url": "songs/%E4%B8%A4%E5%8F%AA%E8%80%81%E8%99%8E.mid",
-      "size": 331,
-      "sha256": "804C1EC05B674FD41B1DC059F6423CC7A22749E173CD6E939B864523022D1363"
-    },
-    {
-      "id": "scale-calibration",
-      "title": "音阶校准 · 低中高与半音",
-      "artist": "三角洲口风琴示例",
-      "description": "用于进入游戏前检查低音、高音和半音键位。",
-      "url": "songs/%E9%9F%B3%E9%98%B6%E6%A0%A1%E5%87%86%20%C2%B7%20%E4%BD%8E%E4%B8%AD%E9%AB%98%E4%B8%8E%E5%8D%8A%E9%9F%B3.mid",
-      "size": 349,
-      "sha256": "1CF70E680F6CA0DDCEDA0B1B08B86A5A3610F13FA24FDA98EA04E38BE14DCF43"
-    }
-  ]
+  "songs": []
 }
