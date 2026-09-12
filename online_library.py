@@ -17,7 +17,7 @@ from music import read_midi
 ONLINE_CATALOG_URL = "https://aiygzn.top/melodica/songs.json"
 MAX_CATALOG_BYTES = 1024 * 1024
 MAX_ONLINE_SONG_BYTES = 10 * 1024 * 1024
-USER_AGENT = "DeltaMelodica/0.11"
+USER_AGENT = "DeltaMelodica/0.12"
 
 
 @dataclass(frozen=True)
