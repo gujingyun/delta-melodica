@@ -82,7 +82,6 @@ h1 em, h2 em { color: var(--green); font-style: normal; }
 .video-start { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: max-content; max-width: calc(100% - 30px); padding: 18px 28px; border: 1px solid var(--green); color: var(--green); background: rgba(11,20,24,.94); font-family: inherit; font-size: 18px; font-weight: 700; line-height: 1.5; cursor: pointer; box-shadow: 0 12px 40px rgba(0,0,0,.4); }
 .video-start[hidden] { display: none; }
 .video-start:hover { background: #1b2d33; }
-.video-start small { display: block; margin-top: 5px; color: var(--muted); font-size: 12px; font-weight: 400; }
 .video-start:focus-visible { outline: 2px solid var(--green); outline-offset: 5px; }
 .video-status { margin: 8px 6px 3px; color: var(--dim); font-size: 12px; }
 .video-figure figcaption { display: flex; justify-content: space-between; gap: 16px; padding: 15px 6px 5px; color: var(--muted); font-size: 13px; }
