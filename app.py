@@ -157,9 +157,18 @@ class App:
         self.online_catalog_status = None
         self.online_catalog_detail = None
         self.online_download_button = None
+        self.online_search_entry = None
+        self.online_page_label = None
+        self.online_prev_button = None
+        self.online_next_button = None
+        self.online_visible_songs = []
+        self.online_filtered_songs = []
+        self.online_page = 0
+        self.online_page_size = 10
         self.online_operation = None
         self.online_operation_kind = None
         self.online_downloaded_ids = set()
+        self.online_search = tk.StringVar(value="")
         self.speed = tk.StringVar(value="1.00")
         self.transpose = tk.StringVar(value="0")
         self.plan_parameters = ("1.00", "0")
@@ -462,6 +471,14 @@ class App:
                  font=("Microsoft YaHei UI", 15, "bold")).pack(anchor="w", padx=22, pady=(20, 4))
         tk.Label(dialog, text="选择曲目后下载到本地曲库；网络不可用时不影响已有曲目播放。",
                  bg=CARD, fg=MUTED).pack(anchor="w", padx=22, pady=(0, 14))
+        search_frame = tk.Frame(dialog, bg=CARD)
+        search_frame.pack(fill="x", padx=22, pady=(0, 12))
+        tk.Label(search_frame, text="搜索曲名", bg=CARD, fg=MUTED).pack(side="left", padx=(0, 10))
+        self.online_search_entry = ttk.Entry(search_frame, textvariable=self.online_search, width=30)
+        self.online_search_entry.pack(side="left", fill="x", expand=True)
+        self.online_search_entry.bind("<KeyRelease>", self.apply_online_search)
+        self.online_search_entry.bind("<Return>", self.apply_online_search)
+        ttk.Button(search_frame, text="搜索", command=self.apply_online_search).pack(side="left", padx=(10, 0))
         body = tk.Frame(dialog, bg=CARD)
         body.pack(fill="both", expand=True, padx=22)
         self.online_catalog_list = tk.Listbox(
@@ -477,6 +494,14 @@ class App:
         self.online_catalog_detail = tk.StringVar(value="正在读取线上曲库…")
         tk.Label(detail_frame, textvariable=self.online_catalog_detail, bg=CARD, fg=MUTED,
                  justify="left", anchor="nw", wraplength=300).pack(fill="both", expand=True, anchor="nw")
+        pagination = tk.Frame(dialog, bg=CARD)
+        pagination.pack(fill="x", padx=22, pady=(10, 0))
+        self.online_prev_button = ttk.Button(pagination, text="上一页", command=lambda: self.change_online_page(-1))
+        self.online_prev_button.pack(side="left")
+        self.online_page_label = tk.StringVar(value="")
+        tk.Label(pagination, textvariable=self.online_page_label, bg=CARD, fg=MUTED).pack(side="left", expand=True)
+        self.online_next_button = ttk.Button(pagination, text="下一页", command=lambda: self.change_online_page(1))
+        self.online_next_button.pack(side="right")
         self.online_catalog_status = tk.StringVar(value="")
         tk.Label(dialog, textvariable=self.online_catalog_status, bg=CARD, fg=ORANGE,
                  anchor="w", justify="left", wraplength=700).pack(fill="x", padx=22, pady=(12, 4))
@@ -503,6 +528,12 @@ class App:
         self.online_catalog_status = None
         self.online_catalog_detail = None
         self.online_download_button = None
+        self.online_search_entry = None
+        self.online_page_label = None
+        self.online_prev_button = None
+        self.online_next_button = None
+        self.online_visible_songs = []
+        self.online_filtered_songs = []
 
     def refresh_online_catalog(self):
         if not self._online_dialog_alive() or self.online_operation:
@@ -512,6 +543,7 @@ class App:
         self.online_catalog_status.set("正在连接官网读取曲目目录…")
         self.online_catalog_list.configure(state="disabled")
         self.online_download_button.configure(state="disabled")
+        self._update_online_pagination_buttons()
         threading.Thread(target=self._fetch_online_catalog, args=(token,), daemon=True).start()
 
     def _fetch_online_catalog(self, token):
@@ -525,10 +557,10 @@ class App:
         if not self.online_catalog_list or not self.online_catalog_detail:
             return
         selection = self.online_catalog_list.curselection()
-        if not selection or selection[0] >= len(self.online_catalog):
+        if not selection or selection[0] >= len(self.online_visible_songs):
             self.online_catalog_detail.set("请选择一首曲目。")
             return
-        song = self.online_catalog[selection[0]]
+        song = self.online_visible_songs[selection[0]]
         lines = [song.title]
         if song.artist:
             lines.append(f"作者：{song.artist}")
@@ -538,19 +570,72 @@ class App:
         self.online_catalog_detail.set("\n".join(lines))
         self.online_download_button.configure(state="normal" if not self.online_operation else "disabled")
 
+    def apply_online_search(self, event=None):
+        """按曲名过滤线上目录，并从第一页显示结果。"""
+        if not self._online_dialog_alive():
+            return
+        self.online_page = 0
+        self._render_online_catalog()
+
+    def change_online_page(self, step):
+        if not self._online_dialog_alive() or self.online_operation:
+            return
+        page_count = max(1, (len(self.online_filtered_songs) + self.online_page_size - 1) // self.online_page_size)
+        self.online_page = min(max(0, self.online_page + step), page_count - 1)
+        self._render_online_catalog()
+
+    def _render_online_catalog(self):
+        """根据当前搜索词和页码刷新线上曲目列表。"""
+        if not self._online_dialog_alive():
+            return
+        query = self.online_search.get().strip().casefold()
+        self.online_filtered_songs = [song for song in self.online_catalog
+                                      if not query or query in song.title.casefold()]
+        page_count = max(1, (len(self.online_filtered_songs) + self.online_page_size - 1) // self.online_page_size)
+        self.online_page = min(max(0, self.online_page), page_count - 1)
+        start = self.online_page * self.online_page_size
+        self.online_visible_songs = self.online_filtered_songs[start:start + self.online_page_size]
+        self.online_catalog_list.delete(0, "end")
+        for song in self.online_visible_songs:
+            label = song.title + (f"  ·  {song.artist}" if song.artist else "")
+            self.online_catalog_list.insert("end", "  " + label)
+        if self.online_filtered_songs:
+            self.online_page_label.set(f"第 {self.online_page + 1} / {page_count} 页 · 共 {len(self.online_filtered_songs)} 首")
+        else:
+            self.online_page_label.set("没有匹配曲目 · 共 0 首")
+        self._update_online_pagination_buttons(page_count)
+        if self.online_visible_songs:
+            self.online_catalog_list.selection_set(0)
+            self.online_catalog_list.see(0)
+            self._select_online_song()
+        else:
+            self.online_catalog_detail.set("没有找到匹配的曲目，请换一个名称搜索。" if query else "官网暂时没有可下载的曲目。")
+            self.online_download_button.configure(state="disabled")
+
+    def _update_online_pagination_buttons(self, page_count=None):
+        if not self._online_dialog_alive():
+            return
+        if page_count is None:
+            page_count = max(1, (len(self.online_filtered_songs) + self.online_page_size - 1) // self.online_page_size)
+        self.online_prev_button.configure(
+            state="normal" if self.online_page > 0 and not self.online_operation else "disabled")
+        self.online_next_button.configure(
+            state="normal" if self.online_page + 1 < page_count and not self.online_operation else "disabled")
+
     def download_online_selected(self):
         if self.busy or not self._online_dialog_alive() or self.online_operation:
             return
         selection = self.online_catalog_list.curselection()
-        if not selection or selection[0] >= len(self.online_catalog):
+        if not selection or selection[0] >= len(self.online_visible_songs):
             self.online_catalog_status.set("请先选择一首线上曲目。")
             return
-        song = self.online_catalog[selection[0]]
+        song = self.online_visible_songs[selection[0]]
         token = uuid.uuid4().hex
         self.online_operation, self.online_operation_kind = token, "download"
         self.online_catalog_status.set(f"正在下载“{song.title}”…")
         self.online_catalog_list.configure(state="disabled")
         self.online_download_button.configure(state="disabled")
+        self._update_online_pagination_buttons()
         threading.Thread(target=self._download_online_song, args=(token, song), daemon=True).start()
 
     def _download_online_song(self, token, song: OnlineSong):
@@ -1355,24 +1440,20 @@ class App:
                     if error:
                         self.log.warning("读取线上曲库失败：%s", error)
                         self.online_catalog = []
+                        self.online_filtered_songs = []
+                        self.online_visible_songs = []
                         self.online_catalog_list.delete(0, "end")
                         self.online_catalog_status.set("无法读取线上曲库，请检查网络后点击“刷新目录”重试。")
                         self.online_catalog_detail.set(str(error))
+                        self.online_page_label.set("目录不可用")
+                        self.online_prev_button.configure(state="disabled")
+                        self.online_next_button.configure(state="disabled")
                         self.online_download_button.configure(state="disabled")
                         continue
                     self.online_catalog = songs
-                    self.online_catalog_list.delete(0, "end")
-                    for song in songs:
-                        label = song.title + (f"  ·  {song.artist}" if song.artist else "")
-                        self.online_catalog_list.insert("end", "  " + label)
+                    self.online_page = 0
+                    self._render_online_catalog()
                     self.online_catalog_status.set(f"已读取 {len(songs)} 首曲目。双击或选择后点击下载。")
-                    if songs:
-                        self.online_catalog_list.selection_set(0)
-                        self.online_catalog_list.see(0)
-                        self._select_online_song()
-                    else:
-                        self.online_catalog_detail.set("官网暂时没有可下载的曲目。")
-                        self.online_download_button.configure(state="disabled")
                 elif kind == "online_download_result":
                     token, song, path, error = value
                     if token != self.online_operation or self.online_operation_kind != "download":
@@ -1384,12 +1465,14 @@ class App:
                             self.online_catalog_list.configure(state="normal")
                             self.online_catalog_status.set(f"下载“{song.title}”失败：{error}")
                             self._select_online_song()
+                            self._update_online_pagination_buttons()
                         continue
                     self.online_downloaded_ids.add(song.song_id)
                     if self._online_dialog_alive():
                         self.online_catalog_list.configure(state="normal")
                         self.online_catalog_status.set(f"已下载“{song.title}”，已加入本地曲库。")
                         self._select_online_song()
+                        self._update_online_pagination_buttons()
                     self.log.info("线上曲目已下载：标题=%s；文件=%s", song.title, path)
                     self._load_library(path)
                     self.detail.set(f"已从线上曲库下载“{song.title}”。")

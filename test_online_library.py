@@ -148,6 +148,28 @@ class OnlineLibraryDialogTests(unittest.TestCase):
         self.assertEqual(self.app.title.get(), "线上测试曲")
         self.assertIn("已下载", self.app.online_catalog_status.get())
 
+    def test_dialog_searches_by_name_and_pages_results(self):
+        songs = [OnlineSong(f"song-{index}", f"曲目 {index:02d}", "https://example.test/demo.mid")
+                 for index in range(12)]
+        with patch("app.fetch_catalog", return_value=songs):
+            self.app.online_library_dialog()
+            self.wait_until(lambda: self.app.online_catalog_list and self.app.online_catalog_list.size() == 10)
+        self.assertEqual(self.app.online_page_label.get(), "第 1 / 2 页 · 共 12 首")
+        self.app.change_online_page(1)
+        self.root.update()
+        self.assertEqual(self.app.online_catalog_list.size(), 2)
+        self.assertEqual(self.app.online_visible_songs[0].title, "曲目 10")
+        self.app.online_search.set("曲目 11")
+        self.app.apply_online_search()
+        self.root.update()
+        self.assertEqual(self.app.online_catalog_list.size(), 1)
+        self.assertEqual(self.app.online_visible_songs[0].title, "曲目 11")
+        self.app.online_search.set("不存在")
+        self.app.apply_online_search()
+        self.root.update()
+        self.assertEqual(self.app.online_catalog_list.size(), 0)
+        self.assertIn("没有匹配", self.app.online_page_label.get())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
