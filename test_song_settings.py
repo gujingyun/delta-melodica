@@ -251,6 +251,37 @@ class SongSettingsTests(unittest.TestCase):
         buttons["取消"].invoke()
         self.assertEqual(self.app.segments, [(1, 3)])
 
+    def test_dialog_exports_unsaved_segments_as_json(self):
+        dialog = self.app.segments_dialog()
+        self.root.update()
+        entries, table, buttons = self.dialog_widgets(dialog)
+        for entry, value in zip(entries, ("1.25", "3.5")):
+            entry.delete(0, "end")
+            entry.insert(0, value)
+        buttons["添加到列表"].invoke()
+        destination = Path(self.folder.name, "导出演出片段.json")
+        with patch("app.filedialog.asksaveasfilename", return_value=str(destination)):
+            buttons["导出片段"].invoke()
+        payload = json.loads(destination.read_text(encoding="utf-8"))
+        self.assertEqual(payload["format"], "三角洲口风琴演出片段")
+        self.assertEqual(payload["version"], 1)
+        self.assertEqual(payload["song"]["title"], "小星星")
+        self.assertEqual(payload["segments"], [[1.25, 3.5]])
+        self.assertFalse(payload["empty_means_full_song"])
+        self.assertEqual(self.app.segments, [])
+        dialog.destroy()
+
+    def test_dialog_export_cancel_does_not_change_saved_segments(self):
+        self.app.rebuild_plan(segments=[(1, 3)])
+        dialog = self.app.segments_dialog()
+        self.root.update()
+        _, _, buttons = self.dialog_widgets(dialog)
+        with patch("app.filedialog.asksaveasfilename", return_value=""):
+            buttons["导出片段"].invoke()
+        self.assertTrue(dialog.winfo_exists())
+        self.assertEqual(self.app.segments, [(1, 3)])
+        dialog.destroy()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

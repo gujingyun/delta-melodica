@@ -919,6 +919,29 @@ class App:
             draft.clear()
             refresh()
 
+        def export():
+            safe_title = "".join(c for c in self.song.title if c not in '<>:"/\\|?*' and ord(c) >= 32).rstrip(" .")[:70] or "演出片段"
+            filename = filedialog.asksaveasfilename(
+                title="导出演出片段", defaultextension=".json",
+                filetypes=[("片段设置", "*.json"), ("所有文件", "*.*")],
+                initialfile=f"{safe_title} - 片段设置.json", parent=dialog)
+            if not filename:
+                return
+            try:
+                segments = validate_segments(draft, self.song.duration)
+                payload = {
+                    "format": "三角洲口风琴演出片段",
+                    "version": 1,
+                    "song": {"title": self.song.title, "duration": self.song.duration},
+                    "segments": [list(segment) for segment in segments],
+                    "empty_means_full_song": not segments,
+                }
+                Path(filename).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                error_text.set(f"已导出 {len(segments)} 个片段：{Path(filename).name}。" if segments
+                               else f"已导出全曲设置：{Path(filename).name}。")
+            except (ValueError, OSError) as error:
+                error_text.set(f"导出失败：{error}")
+
         saving = [False]
 
         def finish_save():
@@ -957,6 +980,7 @@ class App:
                  font=("Microsoft YaHei UI", 9)).pack(fill="x", padx=22, pady=(5, 0))
         buttons = tk.Frame(editor_footer, bg=CARD)
         buttons.pack(fill="x", padx=22, pady=(8, 18))
+        ttk.Button(buttons, text="导出片段", command=export).pack(side="left")
         ttk.Button(buttons, text="保存片段", command=save, style="Accent.TButton").pack(side="right")
         ttk.Button(buttons, text="取消", command=dialog.destroy).pack(side="right", padx=10)
         refresh()
