@@ -32,6 +32,7 @@ import java.util.Locale;
 
 /** 无障碍悬浮控制与触摸后端，所有窗口和调度操作都在主线程。 */
 public final class MelodicaService extends AccessibilityService {
+    private static final long SELECTOR_TAP_MS = 45, SELECTOR_SETTLE_MS = 8;
     public static MelodicaService instance;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private Settings settings;
@@ -45,6 +46,7 @@ public final class MelodicaService extends AccessibilityService {
     private final ToneState tones = new ToneState();
     private Calibration calibration;
     private Score score;
+    private Score.Fingering[] fingerings;
     private Transport transport;
     private String message = "选择曲目后，进入游戏校准音键";
     private GestureDescription.StrokeDescription[] held;
@@ -149,16 +151,18 @@ public final class MelodicaService extends AccessibilityService {
     }
     private void render() {
         if (status == null) return;
-        collapse.setEnabled(canCollapse()); collapse.setAlpha(canCollapse() ? 1f : .35f);
+        boolean enabled = canCollapse();
+        if (collapse.isEnabled() != enabled) { collapse.setEnabled(enabled); collapse.setAlpha(enabled ? 1f : .35f); }
         String detail = message;
         if (transport != null && score != null) {
             long now = SystemClock.uptimeMillis();
             if (transport.state == Transport.State.COUNTDOWN) detail = "准备 " + ((transport.countdown(now) + 999) / 1000) + " 秒";
             else if (transport.state == Transport.State.PLAYING) detail = "正在演奏";
             detail = score.title + "  " + time(transport.position(now)) + " / " + time(score.duration) + "\n" + detail;
-            play.setText(transport.active() ? "暂停" : transport.state == Transport.State.PAUSED ? "继续" : "播放");
+            String label = transport.active() ? "暂停" : transport.state == Transport.State.PAUSED ? "继续" : "播放";
+            if (!label.contentEquals(play.getText())) play.setText(label);
         }
-        status.setText(detail);
+        if (!detail.contentEquals(status.getText())) status.setText(detail);
     }
     static String time(long ms) { return String.format(Locale.ROOT, "%02d:%02d", ms / 60000, ms / 1000 % 60); }
     private void notifyUser(String text) { message = text; Toast.makeText(this, text, Toast.LENGTH_LONG).show(); render(); }
@@ -176,7 +180,8 @@ public final class MelodicaService extends AccessibilityService {
     private boolean validateStart() {
         if (!ready()) { notifyUser("请进入目标窗口并完成 12 点校准；升级或旋转屏幕后需重新校准"); return false; }
         try {
-            for (Score.Note n : score.notes) settings.fingering(n.pitch);
+            fingerings = new Score.Fingering[score.notes.size()];
+            for (int i = 0; i < fingerings.length; i++) fingerings[i] = settings.fingering(score.notes.get(i).pitch);
             for (int point : Score.CALIBRATION_ORDER) {
                 PointF p = settings.point(point);
                 if (p == null) throw new IllegalArgumentException("请重新校准「" + Score.LABELS[point] + "」");
@@ -220,31 +225,41 @@ public final class MelodicaService extends AccessibilityService {
         if (!transport.active()) { release(); return; }
         if (!ready()) { pause("已切出目标窗口，保留进度"); return; }
         long now = SystemClock.uptimeMillis(); transport.update(now);
-        if (transport.state == Transport.State.COUNTDOWN) { schedule(20); return; }
         if (!transport.active()) { message = "演奏结束"; release(); render(); return; }
         long position = transport.position(now);
-        int index = findNote(position);
+        int index = findUpcomingNote(position);
         if (held != null && heldIndex != index) { release(); return; }
         if (index < 0) { schedule(15); return; }
         Score.Note n = score.notes.get(index);
-        Score.Fingering fingering = settings.fingering(n.pitch);
+        Score.Fingering fingering = fingerings[index];
         if (!tones.known()) { pause("变音状态不明，请确认半音后继续"); return; }
         int selector = tones.next(fingering);
         if (selector >= 0) {
             // 必须先抬起音键，再依次点击音区和半音；这些按钮不能与音键一起长按。
             if (held != null) { release(); return; }
-            PointF p = settings.point(selector);
-            if (p == null || covers(p)) { pause("变音按钮被遮挡或校准已失效"); return; }
-            transport.holdClock(now);
+            int[] selectors = tones.steps(fingering);
+            GestureDescription.StrokeDescription[] taps = new GestureDescription.StrokeDescription[selectors.length];
+            for (int i = 0; i < selectors.length; i++) {
+                PointF p = settings.point(selectors[i]);
+                if (p == null || covers(p)) { pause("变音按钮被遮挡或校准已失效"); return; }
+                Path path = new Path(); path.moveTo(p.x, p.y);
+                // 保留 45 毫秒点击；两个按钮顺序抬起后再按下，不做同时多指点击。
+                taps[i] = new GestureDescription.StrokeDescription(path, i * (SELECTOR_TAP_MS + SELECTOR_SETTLE_MS), SELECTOR_TAP_MS);
+            }
+            transport.limitClock(now, n.start);
             Transport batch = transport; long generation = batch.generation;
-            Path path = new Path(); path.moveTo(p.x, p.y);
-            dispatch(new GestureDescription.StrokeDescription[]{new GestureDescription.StrokeDescription(path, 0, 45)}, false, () -> {
-                if (transport == batch && batch.generation == generation && batch.active() && ready()) tones.applied(selector);
+            dispatch(taps, false, () -> {
+                if (transport == batch && batch.generation == generation && batch.active() && ready()) {
+                    for (int point : selectors) tones.applied(point);
+                }
                 else tones.invalidate();
-            }, 20);
+            }, SELECTOR_SETTLE_MS);
             return;
         }
         transport.resumeClock(now);
+        // 倒计时和休止时只预选变音，必须到谱面时刻才按下音键。
+        if (transport.state == Transport.State.COUNTDOWN) { schedule(20); return; }
+        if (position < n.start) { schedule(Math.min(15, Math.max(1, (long) Math.ceil((n.start - position) / transport.speed)))); return; }
         long end = releaseAt(n), remaining = Math.max(1, (long) Math.ceil((end - position) / transport.speed));
         long slice = Math.min(60, remaining); boolean more = remaining > slice;
         if (held == null) {
@@ -274,10 +289,11 @@ public final class MelodicaService extends AccessibilityService {
         return path;
     }
     private long releaseAt(Score.Note n) { return n.end - Math.min(25, Math.max(1, (n.end - n.start) / 10)); }
-    private int findNote(long position) {
+    private int findUpcomingNote(long position) {
         int low = 0, high = score.notes.size() - 1, found = -1;
         while (low <= high) { int mid = (low + high) >>> 1; if (score.notes.get(mid).start <= position) { found = mid; low = mid + 1; } else high = mid - 1; }
-        return found >= 0 && position < releaseAt(score.notes.get(found)) ? found : -1;
+        if (found < 0 || position >= releaseAt(score.notes.get(found))) found++;
+        return found < score.notes.size() ? found : -1;
     }
     private void release() {
         if (inFlight || held == null) { if (transport != null && transport.active() && !inFlight) schedule(0); return; }

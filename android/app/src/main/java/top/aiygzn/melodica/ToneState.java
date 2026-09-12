@@ -11,6 +11,12 @@ public final class ToneState {
         if (tone != fingering.tonePoint()) return fingering.tonePoint();
         return half != fingering.half ? Score.HALF : -1;
     }
+    /** 一次准备完整的顺序点击；生成计划不改变选中状态，完成后才提交。 */
+    public int[] steps(Score.Fingering fingering) {
+        int first = next(fingering);
+        if (first < 0) return new int[0];
+        return first != Score.HALF && half != fingering.half ? new int[]{first, Score.HALF} : new int[]{first};
+    }
     public void applied(int point) {
         if (!known()) throw new IllegalStateException("半音状态未知");
         if (point == Score.HALF) half = 1 - half;

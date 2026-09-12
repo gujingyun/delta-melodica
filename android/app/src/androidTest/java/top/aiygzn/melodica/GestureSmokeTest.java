@@ -28,9 +28,9 @@ public final class GestureSmokeTest extends Instrumentation {
     private Point size;
     private int rotation;
     private PointF[] points;
-    private boolean onlineOnly;
+    private boolean onlineOnly, timingOnly;
     private final StringBuilder report = new StringBuilder();
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); onlineOnly = "online".equals(arguments.getString("suite")); start(); }
+    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); onlineOnly = "online".equals(arguments.getString("suite")); timingOnly = "timing".equals(arguments.getString("suite")); start(); }
     @Override public void onStart() {
         SharedPreferences prefs = getTargetContext().getSharedPreferences("melodica", 0);
         Map<String, ?> previous = new HashMap<>(prefs.getAll());
@@ -72,6 +72,8 @@ public final class GestureSmokeTest extends Instrumentation {
                 }
                 calibrate(keyboard.getPackageName(), rotation);
             });
+            if (timingOnly) { measureTiming(); }
+            else {
             runOnMainSync(() -> {
                 prefs.edit().remove("calibrationVersion").commit();
                 service.toggle();
@@ -95,7 +97,9 @@ public final class GestureSmokeTest extends Instrumentation {
             runOnMainSync(service::stop); pass("半音未确认时不演奏");
             // 重复音、休止和长音必须产生完整 DOWN / UP，续接不能成为空事件。
             start("1 1:2 0 2");
+            await(() -> !list("selectors").isEmpty() && !(Boolean) field(service, "inFlight"), 1000, "倒计时未准备变音");
             runOnMainSync(() -> {
+                check(transport().state == Transport.State.COUNTDOWN && count("downs") == 0, "倒计时提前按下音键");
                 View collapse = find((View) field(service, "panel"), "收起");
                 check(!collapse.isEnabled(), "倒计时中收起未禁用"); collapse.performClick();
                 check(field(service, "panel") != null && transport().active(), "收起入口绕过了播放保护");
@@ -103,7 +107,7 @@ public final class GestureSmokeTest extends Instrumentation {
             await(() -> count("ups") == 3, 7000, "完整演奏没有收到三个抬起事件");
             check(count("downs") == 3 && count("cancels") == 0 && held() == 0, "重复音或长按出现丢失／取消"); pass("重复音、休止、连续长按");
             await(() -> !transport().active() && find((View) field(service, "panel"), "收起").isEnabled(), 500, "播放完成后收起未恢复");
-            pass("倒计时禁用收起、播放结束恢复");
+            pass("倒计时预选变音且不发音、禁用收起、播放结束恢复");
 
             start("1:8 2"); await(() -> held() == 1, 4500, "长音未按下"); SystemClock.sleep(150);
             runOnMainSync(() -> service.pause("测试暂停")); await(() -> held() == 0, 600, "暂停未释放触摸");
@@ -131,7 +135,7 @@ public final class GestureSmokeTest extends Instrumentation {
             check(list("pitches").subList(noteStart, list("pitches").size()).equals(Arrays.asList(60, 61)), "半音初态确认后音高错误"); pass("初始半音已选中时正确开关");
 
             start("+#2:8");
-            await(() -> transport().state == Transport.State.PLAYING && (Boolean) field(service, "inFlight") && held() == 0, 4500, "未捕获变音点击阶段");
+            await(() -> transport().active() && (Boolean) field(service, "inFlight") && held() == 0, 4500, "未捕获变音点击阶段");
             runOnMainSync(() -> service.pause("变音点击期间暂停"));
             int interruptedNotes = count("downs"); SystemClock.sleep(250);
             check(!transport().active() && count("downs") == interruptedNotes && !((ToneState) field(service, "tones")).known(), "旧变音回调继续发键或恢复过期状态");
@@ -166,6 +170,7 @@ public final class GestureSmokeTest extends Instrumentation {
             runOnMainSync(keyboard::finish);
             await(() -> held() == 0 && !transport().active(), 1000, "离开测试窗口未暂停释放"); pass("切出窗口暂停释放");
             }
+            }
         } catch (Throwable error) {
             code = Activity.RESULT_CANCELED; report.append("失败：").append(error).append('\n');
             android.util.Log.e("MelodicaSmoke", "测试失败", error);
@@ -192,6 +197,36 @@ public final class GestureSmokeTest extends Instrumentation {
         result.putString("stream", "\n" + report); finish(code, result);
     }
     private void calibrate(String target, int direction) { settings.calibrate(target, size.x, size.y, direction, points); }
+    @SuppressWarnings("unchecked")
+    private void measureTiming() {
+        for (String score : new String[]{"1 +2 1 -2 1 +2 1 -2 1", "1 0 +2 0 -2 0 1", "1 +#2 -#1 #1 2"}) {
+            int from = count("downs");
+            start(score);
+            await(() -> !transport().active() && held() == 0, 12000, "计时演奏未完成");
+            runOnMainSync(() -> {
+                List<Long> downs = (List<Long>) field(keyboard, "noteDownTimes"), ups = (List<Long>) field(keyboard, "noteUpTimes");
+                List<Score.Note> notes = Score.jianpu(score, 120, "计时").notes;
+                check(downs.size() - from == notes.size() && count("cancels") == 0 && count("selectorWhileHeld") == 0, "计时测试丢音、取消或叠按");
+                for (int i = 0; i < notes.size(); i++) {
+                    check(list("pitches").get(from + i) == notes.get(i).pitch, "计时测试音高错误");
+                    check(downs.get(from + i) - downs.get(from) >= notes.get(i).start - 20, "预选变音导致音符提前");
+                }
+                long totalGap = 0, maxGap = 0;
+                for (int i = from + 1; i < downs.size(); i++) { long gap = downs.get(i) - ups.get(i - 1); totalGap += gap; maxGap = Math.max(maxGap, gap); }
+                long drift = downs.get(downs.size() - 1) - downs.get(from) - notes.get(notes.size() - 1).start;
+                report.append("计时：").append(score).append("；累计延迟 ").append(drift).append(" ms；平均空隙 ").append(totalGap / (notes.size() - 1)).append(" ms；最大空隙 ").append(maxGap).append(" ms\n");
+                if (score.contains(" 0 ")) check(Math.abs(drift) < 150, "充足休止时切换仍在累积延迟");
+            });
+        }
+        int from = count("downs");
+        runOnMainSync(() -> settings.speed(2));
+        start("1:1/4 +#2:1/4 -#1:1/4 #1:1/4 2:1/4");
+        await(() -> !transport().active() && held() == 0, 6000, "二倍速短音未完成");
+        check(list("pitches").subList(from, list("pitches").size()).equals(Arrays.asList(60, 75, 49, 61, 62)), "二倍速切换吞音或错音");
+        check(count("cancels") == 0 && count("selectorWhileHeld") == 0, "二倍速切换取消或叠按");
+        pass("二倍速密集跨音区半音不丢音");
+        pass("实际触摸计时、音符完整及无叠按");
+    }
     private void start(String notes) {
         runOnMainSync(service::stop);
         // 键盘收到 UP 时系统完成回调可能仍在队列中；下一首需等待服务确认释放。

@@ -61,6 +61,34 @@ public class CoreTest {
         p.play(2100, 0); assertEquals(200, p.position(2150));
         p.holdClock(2150); p.stop(); p.play(2500, 0); assertEquals(100, p.position(2550));
     }
+    @Test public void earlySwitchUsesRestAndOnlyWaitsPastNoteDeadline() {
+        Transport p = new Transport(2000, 2); p.play(100, 0);
+        p.limitClock(300, 600); assertEquals(500, p.position(350));
+        p.resumeClock(350); assertEquals(600, p.position(400));
+        p.limitClock(400, 800); assertEquals(800, p.position(600));
+        p.resumeClock(600); assertEquals(850, p.position(625));
+        // 多步变音不能延长同一截止点，也不能把已播放的位置倒退。
+        p.limitClock(625, 900); p.limitClock(700, 900); assertEquals(900, p.position(900));
+        p.pause(900); p.play(1000, 0); assertEquals(1000, p.position(1050));
+        p.limitClock(1050, 800); assertEquals(1000, p.position(1200));
+        p.stop(); p.play(1300, 0); assertEquals(100, p.position(1350));
+    }
+    @Test public void countdownCanPrepareToneWithoutAdvancingMusic() {
+        Transport p = new Transport(2000, 1); p.play(0, 3000);
+        p.limitClock(10, 0); p.resumeClock(120);
+        assertEquals(0, p.position(2999)); p.update(3000); assertEquals(100, p.position(3100));
+    }
+    @Test public void toneBatchKeepsHalfIndependentAndWaitsForCompletion() {
+        ToneState state = new ToneState(); state.confirmHalf(false);
+        Score.Fingering f = Score.map(75, 60, true, true, true);
+        assertArrayEquals(new int[]{Score.HIGH, Score.HALF}, state.steps(f));
+        assertArrayEquals(new int[]{Score.HIGH, Score.HALF}, state.steps(f));
+        state.applied(Score.HIGH); state.applied(Score.HALF);
+        assertArrayEquals(new int[0], state.steps(f));
+        assertArrayEquals(new int[]{Score.NATURAL}, state.steps(Score.map(61, 60, true, true, true)));
+        assertArrayEquals(new int[]{Score.HALF}, state.steps(Score.map(74, 60, true, true, true)));
+        state.invalidate(); assertThrows(IllegalStateException.class, () -> state.steps(f));
+    }
     @Test public void melodyDoesNotRefillAccompaniment() {
         Score s = new Score("和弦", Arrays.asList(new Score.Note(0, 2000, 48, 0), new Score.Note(10, 600, 72, 0), new Score.Note(800, 1000, 72, 0)), 2200).melody(0);
         assertEquals(2, s.notes.size()); assertEquals(72, s.notes.get(0).pitch);

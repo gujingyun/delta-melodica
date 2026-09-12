@@ -20,6 +20,7 @@ public final class TouchTestActivity extends Activity {
     private int octave, selectorWhileHeld;
     private boolean half;
     private final List<Integer> pitches = new ArrayList<>(), selectors = new ArrayList<>();
+    private final List<Long> noteDownTimes = new ArrayList<>(), noteUpTimes = new ArrayList<>();
     private final Map<Integer, TextView> toneButtons = new HashMap<>();
     private final Map<Integer, Long> held = new HashMap<>();
     private TextView state;
@@ -52,10 +53,11 @@ public final class TouchTestActivity extends Activity {
             view.setOnTouchListener((v, event) -> {
                 if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
                     downs++; held.put(key, event.getEventTime()); pitches.add(60 + Score.SCALE[key] + octave + (half ? 1 : 0));
+                    noteDownTimes.add(event.getEventTime());
                     view.setBackgroundColor(0xff66e3ac); update("按下 " + Score.LABELS[key] + " · MIDI " + pitches.get(pitches.size() - 1));
                 }
                 if (event.getActionMasked() == MotionEvent.ACTION_UP || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
-                    Long start = held.remove(key); if (event.getActionMasked() == MotionEvent.ACTION_UP) ups++; else cancels++;
+                    Long start = held.remove(key); if (event.getActionMasked() == MotionEvent.ACTION_UP) { ups++; noteUpTimes.add(event.getEventTime()); } else cancels++;
                     view.setBackgroundColor(0xffbdebd9); update("释放 " + Score.LABELS[key] + " · " + (start == null ? 0 : event.getEventTime() - start) + " ms");
                 }
                 return true;
