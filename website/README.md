@@ -10,7 +10,7 @@
 - `version.json`：客户端检查更新时读取的公开版本清单。
 - `songs.json`：客户端读取的线上 MIDI 曲库目录，当前包含 5 首曲目；新增条目时，`url`、`size` 和 `sha256` 必须与 `songs/` 中的文件一致。
 - `songs/`：线上曲库提供下载的 MIDI 文件目录。
-- `downloads/`：本地部署暂存目录，已被 Git 忽略；发布时从 `dist/三角洲口风琴_v0.12.exe` 复制为 `delta-melodica-v0.12.exe`。
+- `downloads/`：本地部署暂存目录，已被 Git 忽略；发布时从 `dist/三角洲口风琴_v0.13.exe` 复制为 `delta-melodica-v0.13.exe`。
 - `../server/melodica_stats.py`：记录官网浏览次数和下载入口点击次数。
 - `admin/index.html`：私有统计页，由服务器 Basic Auth 保护，不在公开页面显示入口。
 
