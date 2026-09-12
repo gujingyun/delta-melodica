@@ -980,7 +980,8 @@ class App:
                  font=("Microsoft YaHei UI", 9)).pack(fill="x", padx=22, pady=(5, 0))
         buttons = tk.Frame(editor_footer, bg=CARD)
         buttons.pack(fill="x", padx=22, pady=(8, 18))
-        ttk.Button(buttons, text="导出片段", command=export).pack(side="left")
+        # 暂时隐藏导出入口，保留实现以便后续重新开放。
+        ttk.Button(buttons, text="导出片段", command=export)
         ttk.Button(buttons, text="保存片段", command=save, style="Accent.TButton").pack(side="right")
         ttk.Button(buttons, text="取消", command=dialog.destroy).pack(side="right", padx=10)
         refresh()

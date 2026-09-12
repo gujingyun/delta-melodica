@@ -255,6 +255,7 @@ class SongSettingsTests(unittest.TestCase):
         dialog = self.app.segments_dialog()
         self.root.update()
         entries, table, buttons = self.dialog_widgets(dialog)
+        self.assertFalse(buttons["导出片段"].winfo_ismapped())
         for entry, value in zip(entries, ("1.25", "3.5")):
             entry.delete(0, "end")
             entry.insert(0, value)
