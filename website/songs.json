@@ -29,6 +29,13 @@
       "url": "songs/%E5%BD%93%E5%B9%B4%E6%83%85.mid",
       "size": 11259,
       "sha256": "ED53012C8DE0F95F294CEEE38083F71309E30C928686483E408949F7E4F70FCF"
+    },
+    {
+      "id": "zhong-guo-jun-hun",
+      "title": "中国军魂（亮剑主题曲，单声道）",
+      "url": "songs/%E4%B8%AD%E5%9B%BD%E5%86%9B%E9%AD%82%EF%BC%88%E4%BA%AE%E5%89%91%E4%B8%BB%E9%A2%98%E6%9B%B2%EF%BC%8C%E5%8D%95%E5%A3%B0%E9%81%93%EF%BC%89.mid",
+      "size": 1299,
+      "sha256": "4B1776EA8C91ECB94863079E52A1D6B3469E6C92DBBB9BA0A34F136620AEE60E"
     }
   ]
 }
