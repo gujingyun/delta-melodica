@@ -1138,7 +1138,8 @@ class App:
                 self._load_library(destination)
             except (ValueError, OSError) as error:
                 messagebox.showerror("简谱未保存", str(error), parent=dialog)
-        ttk.Button(dialog, text="保存到曲库", style="Accent.TButton", command=save).pack(anchor="e", padx=22, pady=(0, 20))
+        # 先为底部按钮预留空间，避免文本框在默认窗口或高缩放下把它挤掉。
+        ttk.Button(dialog, text="保存到曲库", style="Accent.TButton", command=save).pack(side="bottom", before=editor, anchor="e", padx=22, pady=(0, 20))
 
     def settings_dialog(self):
         dialog = self._dialog("键位与演奏设置", "660x690")

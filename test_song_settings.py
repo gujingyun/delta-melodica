@@ -52,6 +52,34 @@ class SongSettingsTests(unittest.TestCase):
         midi.save(path)
         return path
 
+    def test_score_dialog_save_stays_visible_and_selects_new_song(self):
+        for scaling in (4 / 3, 2, 8 / 3):
+            self.root.tk.call("tk", "scaling", scaling)
+            self.app.score_dialog()
+            dialog = self.root.grab_current()
+            editor = next(child for child in dialog.winfo_children() if isinstance(child, tk.Text))
+            save = next(child for child in dialog.winfo_children()
+                        if isinstance(child, ttk.Button) and child.cget("text") == "保存到曲库")
+            for geometry in ("720x510", "660x480", "900x700"):
+                with self.subTest(scaling=scaling, geometry=geometry):
+                    dialog.geometry(geometry)
+                    self.root.update()
+                    self.assertTrue(save.winfo_ismapped(), "保存按钮被文本框挤出窗口")
+                    self.assertGreaterEqual(save.winfo_height(), save.winfo_reqheight())
+                    self.assertLessEqual(save.winfo_y() + save.winfo_height(), dialog.winfo_height())
+                    self.assertLessEqual(editor.winfo_y() + editor.winfo_height(), save.winfo_y())
+            editor.delete("1.0", "end")
+            editor.insert("1.0", "1 2:1/2 0 +1:2")
+            save.invoke()
+            self.root.update()
+            self.assertFalse(dialog.winfo_exists())
+            self.assertEqual([note.pitch for note in self.app.song.notes], [60, 62, 72])
+            self.assertEqual(len(self.app.plan.notes), 3)
+            self.assertEqual(self.app.current_source[1].suffix, ".json")
+            saved = json.loads(self.app.current_source[1].read_text(encoding="utf-8"))
+            self.assertEqual(saved["score"], "1 2:1/2 0 +1:2")
+            self.assertFalse(self.app.player.active)
+
     def test_song_switch_and_restart_restore_independent_parameters(self):
         self.app.change_speed(1)
         self.app.change_transpose(3)
