@@ -22,6 +22,13 @@
       "url": "songs/%E5%AF%82%E5%AF%9E%E7%9A%84%E4%BA%BA%E4%BC%A4%E5%BF%83%E7%9A%84%E6%AD%8C%EF%BC%88%E5%BE%97%E5%90%83%E5%B0%8F%E6%9B%B2%E6%98%AF1.75%E5%80%8D%E9%80%9F%EF%BC%89.mid",
       "size": 7788,
       "sha256": "62E7DB01BD2D05C1DE73EB4BC1258A5EC834A4BDD1BB5BC7DBFFA26AA1633C96"
+    },
+    {
+      "id": "dang-nian-qing",
+      "title": "当年情",
+      "url": "songs/%E5%BD%93%E5%B9%B4%E6%83%85.mid",
+      "size": 11259,
+      "sha256": "ED53012C8DE0F95F294CEEE38083F71309E30C928686483E408949F7E4F70FCF"
     }
   ]
 }

@@ -8,7 +8,7 @@
 - `assets/display-mode-borderless.png`：游戏视频设置中的无边框窗口示意图。
 - `delta-melodica-nginx.conf`：现有 Nginx 站点的独立路径配置。
 - `version.json`：客户端检查更新时读取的公开版本清单。
-- `songs.json`：客户端读取的线上 MIDI 曲库目录，当前包含 3 首曲目；新增条目时，`url`、`size` 和 `sha256` 必须与 `songs/` 中的文件一致。
+- `songs.json`：客户端读取的线上 MIDI 曲库目录，当前包含 4 首曲目；新增条目时，`url`、`size` 和 `sha256` 必须与 `songs/` 中的文件一致。
 - `songs/`：线上曲库提供下载的 MIDI 文件目录。
 - `downloads/`：本地部署暂存目录，已被 Git 忽略；发布时从 `dist/三角洲口风琴_v0.11.exe` 复制为 `delta-melodica-v0.11.exe`。
 - `../server/melodica_stats.py`：记录官网浏览次数和下载入口点击次数。
