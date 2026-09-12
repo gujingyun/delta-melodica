@@ -6,7 +6,8 @@
   <meta name="description" content="三角洲口风琴：Windows MIDI／简谱自动演奏工具，支持悬浮窗、片段播放、调速与移调。">
   <meta name="theme-color" content="#0d171c">
   <title>三角洲口风琴 · Windows 自动演奏工具</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=20260913-hls">
+  <script defer src="video-player.js?v=20260913-hls"></script>
 </head>
 <body>
   <div class="page-shell">
@@ -19,6 +20,7 @@
         </span>
       </a>
       <nav class="site-nav" aria-label="页面导航">
+        <a href="#demo">视频演示</a>
         <a href="#features">功能</a>
         <a href="#guide">怎么用</a>
         <a href="#display-mode">注意事项</a>
@@ -37,7 +39,7 @@
             <a class="button button-primary" href="api/download" download>
               <span aria-hidden="true">↓</span> 下载 v0.13
             </a>
-            <a class="text-link" href="#features">先了解功能 <span aria-hidden="true">→</span></a>
+            <a class="text-link" href="#demo">先看功能演示 <span aria-hidden="true">→</span></a>
           </div>
           <div class="hero-meta" aria-label="版本信息">
             <span>免安装单文件</span>
@@ -62,6 +64,36 @@
         <div><strong>0.25–2×</strong><span>速度倍率</span></div>
         <div><strong>±24</strong><span>半音移调范围</span></div>
         <div><strong>F6–F11</strong><span>游戏内快捷操作</span></div>
+      </section>
+
+      <section id="demo" class="section container video-section" aria-labelledby="demo-title">
+        <div class="video-heading">
+          <div class="section-heading">
+            <p class="eyebrow">SEE IT IN ACTION</p>
+            <h2 id="demo-title">先看一段，<em>实际怎么用。</em></h2>
+            <p>从软件界面到游戏内演奏，用一段实录了解三角洲口风琴的功能与操作。</p>
+          </div>
+          <span class="video-badge">02:21 · 1080P · HLS 流媒体</span>
+        </div>
+        <figure class="video-figure">
+          <div class="video-stage">
+            <video id="demo-video" controls playsinline preload="none" width="1920" height="1080"
+                   poster="assets/feature-intro-20260912.jpg" aria-label="三角洲口风琴功能介绍视频"
+                   aria-describedby="demo-caption video-status"
+                   data-stream="videos/feature-intro-20260912/index.m3u8">
+              你的浏览器不支持内嵌视频，请使用下方链接打开观看。
+            </video>
+            <button id="video-start" class="video-start" type="button" hidden>
+              <span aria-hidden="true">▶</span> 播放功能介绍
+              <small>按需加载 · 流媒体播放</small>
+            </button>
+          </div>
+          <figcaption id="demo-caption">
+            <span>HLS 分片加载，支持全屏和进度拖动。视频录制于 v0.12，界面以最新版为准。</span>
+            <a href="videos/feature-intro-20260912.mp4" target="_blank" rel="noopener">MP4 兼容播放 <span aria-hidden="true">↗</span></a>
+          </figcaption>
+          <p id="video-status" class="video-status" role="status">点击播放后才加载视频，不自动播放。</p>
+        </figure>
       </section>
 
       <section id="features" class="section container">
