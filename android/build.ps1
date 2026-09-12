@@ -21,7 +21,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw '安卓测试或构建失败，请检查上方输出。' }
         $taskOutput = Join-Path (Split-Path $PSScriptRoot -Parent) 'dist'
         New-Item -ItemType Directory -Path $taskOutput -Force | Out-Null
-        $taskApk = Join-Path $taskOutput '三角洲口风琴_安卓_v0.1预览版.apk'
+        $taskApk = Join-Path $taskOutput '三角洲口风琴_安卓_v0.2预览版.apk'
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'app\build\outputs\apk\debug\app-debug.apk') -Destination $taskApk
         Write-Output "已生成：$taskApk"
         Get-FileHash -LiteralPath $taskApk -Algorithm SHA256

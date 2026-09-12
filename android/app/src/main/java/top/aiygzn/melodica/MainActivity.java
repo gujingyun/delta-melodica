@@ -20,7 +20,6 @@ import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.Spinner;
-import android.widget.Switch;
 import android.widget.TextView;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -82,11 +81,11 @@ public final class MainActivity extends Activity {
         action(params, "音键与变音设置", this::mappingDialog, false);
         LinearLayout launch = card("04  进入游戏演奏");
         targetInfo = text(launch, "", 12, 0xffa7bebc);
-        text(launch, "进入口风琴演奏画面 → 点悬浮窗「校准」→ 依次点八个音键中心 → 点「播放」。首次播放倒计时 3 秒。", 14, Color.WHITE);
+        text(launch, "进入口风琴演奏画面 → 校准八个音键及半音、升调、自然音、降调 → 播放前确认半音是否选中。首次播放倒计时 3 秒。", 14, Color.WHITE);
         action(launch, "显示悬浮控制条", () -> { if (service()) { prepare(); MelodicaService.instance.showPanel(); toast("已显示，请进入游戏演奏画面"); } }, true);
         action(launch, "打开本地测试键盘", () -> { if (MelodicaService.instance != null) { prepare(); MelodicaService.instance.showPanel(); } startActivity(new Intent(this, TouchTestActivity.class)); }, false);
         action(launch, "停止并关闭演奏服务", () -> { if (MelodicaService.instance != null) { MelodicaService.instance.stop(); MelodicaService.instance.disableSelf(); } serviceStatus.setText("服务已关闭"); }, false);
-        text(content, "预览版 0.1  ·  Android 8.0+\n支持 MIDI 0/1 与文本简谱。变音键默认关闭；游戏内触摸兼容性、长音和音高需真机校准。", 11, 0xff789795);
+        text(content, "预览版 0.2  ·  Android 8.0+\n支持 MIDI 0/1 与文本简谱、点击选中式变音。升级后请重新完成 12 点校准。", 11, 0xff789795);
         songs.setOnItemSelectedListener(listener(this::selectSong));
         refreshLibrary(); updateStatus();
     }
@@ -143,19 +142,18 @@ public final class MainActivity extends Activity {
     @Override protected void onPause() { statusHandler.removeCallbacks(refreshStatus); super.onPause(); }
     private void updateStatus() {
         serviceStatus.setText(MelodicaService.instance != null ? "●  演奏服务已连接" : "○  演奏服务未开启");
-        targetInfo.setText(settings.target().isEmpty() ? "还没有音键校准记录" : "已绑定：" + settings.target() + "\n校准画面：" + settings.width() + " × " + settings.height());
+        targetInfo.setText(!settings.calibrated() ? "需要重新校准：八个音键 + 四个变音按钮" : "已绑定：" + settings.target() + "\n12 点校准画面：" + settings.width() + " × " + settings.height());
     }
     private void mappingDialog() {
         LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(22), dp(12), dp(22), dp(12));
         text(box, "中央 1 的 MIDI 音高（默认 C4 = 60）", 13, Color.WHITE);
         EditText base = new EditText(this); base.setInputType(InputType.TYPE_CLASS_NUMBER); base.setText(String.valueOf(settings.base())); box.addView(base);
-        Switch[] switches = new Switch[3];
-        for (int i = 0; i < 3; i++) { switches[i] = new Switch(this); switches[i].setText(Score.LABELS[i + 8] + "长按键"); switches[i].setChecked(settings.modifier(i + 8)); box.addView(switches[i]); }
-        text(box, "只有手游存在对应的「按住变音」按钮时才开启。开启后重新校准。关闭八度键时超出音域的音按八度折回；没有升半音键时含半音的曲目会提示修正。", 12, 0xffa7bebc);
+        text(box, "升调 / 自然音 / 降调为三选一，点击后保持；半音独立开关，可与任一音区组合。请校准全部 12 个按钮。", 13, Color.WHITE);
+        text(box, "当前映射：升调高一个八度，降调低一个八度，半音升半音；超出总音域时按八度折回。开始和续播前请如实确认游戏内半音状态。手动调整变音前请先暂停。", 12, 0xffa7bebc);
         AlertDialog dialog = new AlertDialog.Builder(this).setTitle("音键与变音").setView(box).setPositiveButton("保存", null).setNegativeButton("取消", null).create();
         dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             try { int value = Integer.parseInt(base.getText().toString()); if (value < 24 || value > 96) throw new IllegalArgumentException("中央音高需为 24～96");
-                settings.base(value); for (int i = 0; i < 3; i++) settings.modifier(i + 8, switches[i].isChecked()); prepare(); dialog.dismiss();
+                settings.base(value); prepare(); dialog.dismiss();
             } catch (Exception e) { base.setError("中央音高需为 24～96"); }
         })); dialog.show();
     }

@@ -28,8 +28,6 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Locale;
 
 /** 无障碍悬浮控制与触摸后端，所有窗口和调度操作都在主线程。 */
@@ -42,6 +40,9 @@ public final class MelodicaService extends AccessibilityService {
     private WindowManager.LayoutParams panelParams;
     private TextView status;
     private Button play;
+    private LinearLayout halfConfirmation;
+    private boolean awaitingHalf;
+    private final ToneState tones = new ToneState();
     private Calibration calibration;
     private Score score;
     private Transport transport;
@@ -58,6 +59,7 @@ public final class MelodicaService extends AccessibilityService {
         @Override public void run() {
             if (destroyed) return;
             if (transport != null && transport.active() && !ready()) pause("已离开目标窗口或屏幕发生变化");
+            if (awaitingHalf && !ready()) pause("画面变化，请重新确认半音状态");
             if (calibration != null && !calibration.valid()) closeCalibration();
             render(); handler.postDelayed(this, 100);
         }
@@ -92,7 +94,7 @@ public final class MelodicaService extends AccessibilityService {
     }
     private boolean ready() {
         Point size = size();
-        return screenReady() && !settings.target().isEmpty() && settings.target().equals(foreground())
+        return screenReady() && settings.calibrated() && !settings.target().isEmpty() && settings.target().equals(foreground())
             && size.x == settings.width() && size.y == settings.height() && rotation() == settings.rotation()
             && ( !settings.target().equals(getPackageName()) || TouchTestActivity.active );
     }
@@ -107,6 +109,13 @@ public final class MelodicaService extends AccessibilityService {
         button(row, "停止", this::stop);
         button(row, "校准", this::startCalibration);
         button(row, "收起", () -> { stop(); hidePanel(); });
+        halfConfirmation = new LinearLayout(this); halfConfirmation.setOrientation(LinearLayout.VERTICAL);
+        TextView question = new TextView(this); question.setText("游戏内「半音」当前是否选中？"); question.setTextColor(Color.WHITE); question.setTextSize(13); halfConfirmation.addView(question);
+        LinearLayout choices = new LinearLayout(this); halfConfirmation.addView(choices);
+        button(choices, "未选中", () -> confirmHalfState(false));
+        button(choices, "已选中", () -> confirmHalfState(true));
+        button(choices, "取消", () -> { dismissHalfConfirmation(); message = "已取消播放"; render(); });
+        panel.addView(halfConfirmation); halfConfirmation.setVisibility(View.GONE);
         panelParams = new WindowManager.LayoutParams(dp(300), WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT);
         panelParams.gravity = Gravity.TOP | Gravity.LEFT; panelParams.x = dp(12); panelParams.y = dp(24);
@@ -130,8 +139,9 @@ public final class MelodicaService extends AccessibilityService {
         row.addView(button, new LinearLayout.LayoutParams(0, dp(44), 1)); button.setOnClickListener(v -> click.run()); return button;
     }
     public void hidePanel() {
+        dismissHalfConfirmation();
         closeCalibration();
-        if (panel != null) { windows.removeView(panel); panel = null; status = null; play = null; }
+        if (panel != null) { windows.removeView(panel); panel = null; status = null; play = null; halfConfirmation = null; }
     }
     private void render() {
         if (status == null) return;
@@ -150,18 +160,35 @@ public final class MelodicaService extends AccessibilityService {
     public void toggle() {
         if (transport == null || calibration != null) return;
         if (transport.active()) { pause("已暂停"); return; }
+        if (awaitingHalf) return;
         // 手指点悬浮按钮时系统会先取消演奏手势，避免该次抬手又触发继续。
         if (transport.state == Transport.State.PAUSED && SystemClock.uptimeMillis() - cancelledAt < 400) return;
         if (inFlight || held != null) { notifyUser("正在释放触摸，请稍后重试"); return; }
-        if (!ready()) { notifyUser("请进入已校准的目标窗口；首次使用或旋转屏幕后需校准"); return; }
+        if (!validateStart()) return;
+        showPanel(); awaitingHalf = true; tones.invalidate();
+        halfConfirmation.setVisibility(View.VISIBLE); message = "先确认半音当前状态，再开始演奏"; render();
+    }
+    private boolean validateStart() {
+        if (!ready()) { notifyUser("请进入目标窗口并完成 12 点校准；升级或旋转屏幕后需重新校准"); return false; }
         try {
-            // 开始前检查全曲，避免含半音的曲目播放到一半才失败。
-            for (Score.Note n : score.notes) for (int point : settings.fingering(n.pitch).points()) {
+            for (Score.Note n : score.notes) settings.fingering(n.pitch);
+            for (int point : Score.CALIBRATION_ORDER) {
                 PointF p = settings.point(point);
                 if (p == null) throw new IllegalArgumentException("请重新校准「" + Score.LABELS[point] + "」");
-                if (covers(p)) throw new IllegalArgumentException("悬浮窗挡住了音键，请拖到空白区域");
+                if (covers(p)) throw new IllegalArgumentException("悬浮窗挡住了「" + Score.LABELS[point] + "」，请拖到空白区域");
             }
-        } catch (IllegalArgumentException e) { notifyUser(e.getMessage()); return; }
+        } catch (IllegalArgumentException e) { notifyUser(e.getMessage()); return false; }
+        return true;
+    }
+    private void dismissHalfConfirmation() {
+        awaitingHalf = false;
+        if (halfConfirmation != null) halfConfirmation.setVisibility(View.GONE);
+    }
+    void confirmHalfState(boolean selected) {
+        if (!awaitingHalf) return;
+        dismissHalfConfirmation();
+        if (transport == null || transport.active() || inFlight || held != null || !validateStart()) return;
+        tones.confirmHalf(selected);
         transport.play(SystemClock.uptimeMillis(), transport.state == Transport.State.PAUSED ? 0 : 3000);
         message = "正在演奏"; schedule(0);
     }
@@ -171,11 +198,13 @@ public final class MelodicaService extends AccessibilityService {
         return p.x >= location[0] && p.x < location[0] + panel.getWidth() && p.y >= location[1] && p.y < location[1] + panel.getHeight();
     }
     public void pause(String reason) {
+        dismissHalfConfirmation(); tones.invalidate();
         if (transport != null) transport.pause(SystemClock.uptimeMillis());
         message = reason; handler.removeCallbacks(pumpTask);
         if (!inFlight) release(); render();
     }
     public void stop() {
+        dismissHalfConfirmation(); tones.invalidate();
         if (transport != null) transport.stop();
         message = "已停止，回到曲首"; handler.removeCallbacks(pumpTask);
         if (!inFlight) release(); render();
@@ -193,10 +222,28 @@ public final class MelodicaService extends AccessibilityService {
         if (held != null && heldIndex != index) { release(); return; }
         if (index < 0) { schedule(15); return; }
         Score.Note n = score.notes.get(index);
+        Score.Fingering fingering = settings.fingering(n.pitch);
+        if (!tones.known()) { pause("变音状态不明，请确认半音后继续"); return; }
+        int selector = tones.next(fingering);
+        if (selector >= 0) {
+            // 必须先抬起音键，再依次点击音区和半音；这些按钮不能与音键一起长按。
+            if (held != null) { release(); return; }
+            PointF p = settings.point(selector);
+            if (p == null || covers(p)) { pause("变音按钮被遮挡或校准已失效"); return; }
+            transport.holdClock(now);
+            Transport batch = transport; long generation = batch.generation;
+            Path path = new Path(); path.moveTo(p.x, p.y);
+            dispatch(new GestureDescription.StrokeDescription[]{new GestureDescription.StrokeDescription(path, 0, 45)}, false, () -> {
+                if (transport == batch && batch.generation == generation && batch.active() && ready()) tones.applied(selector);
+                else tones.invalidate();
+            }, 20);
+            return;
+        }
+        transport.resumeClock(now);
         long end = releaseAt(n), remaining = Math.max(1, (long) Math.ceil((end - position) / transport.speed));
         long slice = Math.min(60, remaining); boolean more = remaining > slice;
         if (held == null) {
-            int[] ids = settings.fingering(n.pitch).points();
+            int[] ids = {fingering.key};
             held = new GestureDescription.StrokeDescription[ids.length]; heldIndex = index;
             anchors = new PointF[ids.length]; endpoints = new PointF[ids.length];
             for (int i = 0; i < ids.length; i++) {
@@ -234,6 +281,9 @@ public final class MelodicaService extends AccessibilityService {
         dispatch(ending, false);
     }
     private void dispatch(GestureDescription.StrokeDescription[] strokes, boolean continued) {
+        dispatch(strokes, continued, null, 0);
+    }
+    private void dispatch(GestureDescription.StrokeDescription[] strokes, boolean continued, Runnable completed, long settle) {
         GestureDescription.Builder builder = new GestureDescription.Builder();
         for (GestureDescription.StrokeDescription stroke : strokes) builder.addStroke(stroke);
         inFlight = true; long serial = ++gestureSerial;
@@ -244,7 +294,8 @@ public final class MelodicaService extends AccessibilityService {
                     if (destroyed || serial != gestureSerial) return;
                     handler.removeCallbacks(watchdog); inFlight = false;
                     if (!continued) { held = null; heldIndex = -1; }
-                    if (transport != null && transport.active()) schedule(0); else release();
+                    if (completed != null) completed.run();
+                    if (transport != null && transport.active()) schedule(settle); else release();
                 }
                 @Override public void onCancelled(GestureDescription gesture) {
                     if (destroyed || serial != gestureSerial) return;
@@ -259,6 +310,7 @@ public final class MelodicaService extends AccessibilityService {
     private void fail(String reason) {
         if (destroyed) return;
         handler.removeCallbacks(watchdog); gestureSerial++; inFlight = false; held = null;
+        dismissHalfConfirmation(); tones.invalidate();
         if (transport != null) transport.stop();
         handler.removeCallbacks(pumpTask); notifyUser(reason);
         // 接口状态不明时断开服务，让系统清理该服务的触摸序列。
@@ -284,36 +336,38 @@ public final class MelodicaService extends AccessibilityService {
     }
     private final class Calibration extends View {
         final String target; final Point screen = size(); final int orientation = rotation();
-        final PointF[] points = new PointF[11]; final List<Integer> required = new ArrayList<>();
+        final PointF[] points = new PointF[Score.LABELS.length]; final int[] required = Score.CALIBRATION_ORDER;
         final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG); int index;
-        Calibration(String target) { super(MelodicaService.this); this.target = target; for (int i = 0; i < 11; i++) if (i < 8 || settings.modifier(i)) required.add(i); }
+        Calibration(String target) { super(MelodicaService.this); this.target = target; }
         boolean valid() { Point s = size(); return screenReady() && target.equals(foreground()) && screen.equals(s) && orientation == rotation(); }
         @Override protected void onDraw(Canvas canvas) {
             canvas.drawColor(0x25000000); paint.setColor(0xeb102829); canvas.drawRect(0, 0, getWidth(), dp(76), paint);
             paint.setColor(0xff66e3ac); paint.setTextSize(dp(18));
-            canvas.drawText("请点音键中心：" + Score.LABELS[required.get(index)] + "（" + (index + 1) + "/" + required.size() + "）", dp(18), dp(28), paint);
+            canvas.drawText("请点按钮中心：" + Score.LABELS[required[index]] + "（" + (index + 1) + "/" + required.length + "）", dp(18), dp(28), paint);
             paint.setColor(Color.WHITE); paint.setTextSize(dp(12)); canvas.drawText("仅标记位置，不会点击游戏  ·  " + target, dp(18), dp(53), paint);
             paint.setTextSize(dp(14)); canvas.drawText("撤销", getWidth() - dp(120), dp(30), paint); canvas.drawText("取消", getWidth() - dp(58), dp(30), paint);
             int[] origin = new int[2]; getLocationOnScreen(origin);
-            for (int i = 0; i < 11; i++) if (points[i] != null) {
+            for (int i = 0; i < points.length; i++) if (points[i] != null) {
                 float x = points[i].x - origin[0], y = points[i].y - origin[1];
-                paint.setColor(0xbb66e3ac); canvas.drawCircle(x, y, dp(17), paint);
-                paint.setColor(0xff102829); paint.setTextSize(dp(12)); canvas.drawText(Score.LABELS[i], x - dp(5), y + dp(4), paint);
+                paint.setTextSize(dp(12)); paint.setTextAlign(Paint.Align.CENTER);
+                paint.setColor(0xff66e3ac); canvas.drawCircle(x, y, Math.max(dp(17), paint.measureText(Score.LABELS[i]) / 2 + dp(5)), paint);
+                paint.setColor(0xff102829); canvas.drawText(Score.LABELS[i], x, y + dp(4), paint);
             }
+            paint.setTextAlign(Paint.Align.LEFT);
         }
         @Override public boolean onTouchEvent(MotionEvent event) {
             if (event.getActionMasked() != MotionEvent.ACTION_UP) return true;
             if (!valid()) { closeCalibration(); notifyUser("画面变化，校准已取消"); return true; }
             if (event.getY() < dp(76)) {
                 if (event.getX() > getWidth() - dp(70)) closeCalibration();
-                else if (event.getX() > getWidth() - dp(140) && index > 0) { points[required.get(--index)] = null; invalidate(); }
+                else if (event.getX() > getWidth() - dp(140) && index > 0) { points[required[--index]] = null; invalidate(); }
                 return true;
             }
             PointF p = new PointF(event.getRawX(), event.getRawY());
             if (p.x < 0 || p.y < 0 || p.x >= screen.x || p.y >= screen.y) return true;
             for (PointF old : points) if (old != null && Math.hypot(old.x - p.x, old.y - p.y) < dp(12)) { notifyUser("两个音键太近，请重新点选"); return true; }
-            points[required.get(index++)] = p;
-            if (index == required.size()) {
+            points[required[index++]] = p;
+            if (index == required.length) {
                 settings.calibrate(target, screen.x, screen.y, orientation, points); closeCalibration(); notifyUser("校准已保存，可以播放");
             } else invalidate();
             return true;

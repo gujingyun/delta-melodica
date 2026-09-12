@@ -8,8 +8,6 @@ import android.graphics.PointF;
 public final class Settings {
     private final SharedPreferences prefs;
     public Settings(Context context) { prefs = context.getSharedPreferences("melodica", Context.MODE_PRIVATE); }
-    public boolean modifier(int index) { return prefs.getBoolean("modifier" + index, false); }
-    public void modifier(int index, boolean value) { prefs.edit().putBoolean("modifier" + index, value).apply(); }
     public int base() { return prefs.getInt("base", 60); }
     public void base(int value) { prefs.edit().putInt("base", value).apply(); }
     public int transpose() { return prefs.getInt("transpose", 0); }
@@ -24,17 +22,28 @@ public final class Settings {
     public int width() { return prefs.getInt("width", 0); }
     public int height() { return prefs.getInt("height", 0); }
     public int rotation() { return prefs.getInt("rotation", -1); }
+    public boolean calibrated() {
+        if (prefs.getInt("calibrationVersion", 0) != 2) return false;
+        for (int i = 0; i < Score.LABELS.length; i++) {
+            PointF p = point(i);
+            if (p == null || !Float.isFinite(p.x) || !Float.isFinite(p.y) || p.x >= width() || p.y >= height()) return false;
+        }
+        return true;
+    }
     public PointF point(int index) {
         float x = prefs.getFloat("x" + index, -1), y = prefs.getFloat("y" + index, -1);
         return x < 0 || y < 0 ? null : new PointF(x, y);
     }
     public void calibrate(String target, int width, int height, int rotation, PointF[] points) {
-        SharedPreferences.Editor edit = prefs.edit().putString("target", target).putInt("width", width).putInt("height", height).putInt("rotation", rotation);
-        for (int i = 0; i < 11; i++) {
+        if (points.length != Score.LABELS.length) throw new IllegalArgumentException("需要校准全部 12 个位置");
+        for (PointF p : points) if (p == null || !Float.isFinite(p.x) || !Float.isFinite(p.y) || p.x < 0 || p.y < 0 || p.x >= width || p.y >= height)
+            throw new IllegalArgumentException("校准位置无效");
+        SharedPreferences.Editor edit = prefs.edit().putInt("calibrationVersion", 2).putString("target", target).putInt("width", width).putInt("height", height).putInt("rotation", rotation);
+        for (int i = 0; i < Score.LABELS.length; i++) {
             edit.remove("x" + i).remove("y" + i);
             if (points[i] != null) edit.putFloat("x" + i, points[i].x).putFloat("y" + i, points[i].y);
         }
         edit.apply();
     }
-    public Score.Fingering fingering(int pitch) { return Score.map(pitch + transpose(), base(), modifier(8), modifier(9), modifier(10)); }
+    public Score.Fingering fingering(int pitch) { return Score.map(pitch + transpose(), base(), true, true, true); }
 }

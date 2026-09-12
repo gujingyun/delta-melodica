@@ -10,10 +10,14 @@ import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.MotionEvent;
 import android.widget.TextView;
 import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.function.BooleanSupplier;
 
 /** 仅向自建测试键盘发手势；测试结束恢复原来的设置和曲目。 */
@@ -55,10 +59,9 @@ public final class GestureSmokeTest extends Instrumentation {
             runOnMainSync(() -> {
                 service.stop(); service.hidePanel(); settings = new Settings(keyboard);
                 settings.speed(1); settings.base(60); settings.transpose(0);
-                for (int i = 8; i < 11; i++) settings.modifier(i, false);
                 size = new Point(); keyboard.getWindowManager().getDefaultDisplay().getRealSize(size);
-                rotation = keyboard.getWindowManager().getDefaultDisplay().getRotation(); points = new PointF[11];
-                for (int i = 0; i < 8; i++) {
+                rotation = keyboard.getWindowManager().getDefaultDisplay().getRotation(); points = new PointF[Score.LABELS.length];
+                for (int i = 0; i < points.length; i++) {
                     View key = find(keyboard.getWindow().getDecorView(), Score.LABELS[i]);
                     if (key == null) throw new AssertionError("未找到测试音键");
                     int[] location = new int[2]; key.getLocationOnScreen(location);
@@ -66,6 +69,27 @@ public final class GestureSmokeTest extends Instrumentation {
                 }
                 calibrate(keyboard.getPackageName(), rotation);
             });
+            runOnMainSync(() -> {
+                prefs.edit().remove("calibrationVersion").commit();
+                service.toggle();
+                check(!settings.calibrated() && !transport().active() && !(Boolean) field(service, "awaitingHalf"), "旧校准被误用");
+                service.showPanel(); find((View) field(service, "panel"), "校准").performClick();
+            });
+            SystemClock.sleep(150);
+            for (int id : Score.CALIBRATION_ORDER) {
+                tap(points[id]);
+                if (id == Score.NATURAL) saveScreen("calibration-v02.png");
+            }
+            await(settings::calibrated, 1000, "12 点校准未保存");
+            for (int i = 0; i < points.length; i++) check(settings.point(i).equals(points[i]), "校准位置对应错误");
+            check(count("downs") == 0 && list("selectors").isEmpty(), "校准穿透点击了测试键盘");
+            pass("旧校准失效与真实点击完成 12 点校准");
+
+            runOnMainSync(() -> { service.toggle(); check((Boolean) field(service, "awaitingHalf"), "没有请求半音状态"); });
+            SystemClock.sleep(200);
+            check(!transport().active() && list("selectors").isEmpty(), "确认半音前发送了触摸");
+            saveScreen("half-confirmation-v02.png");
+            runOnMainSync(service::stop); pass("半音未确认时不演奏");
             // 重复音、休止和长音必须产生完整 DOWN / UP，续接不能成为空事件。
             start("1 1:2 0 2");
             await(() -> count("ups") == 3, 7000, "完整演奏没有收到三个抬起事件");
@@ -75,12 +99,40 @@ public final class GestureSmokeTest extends Instrumentation {
             runOnMainSync(() -> service.pause("测试暂停")); await(() -> held() == 0, 600, "暂停未释放触摸");
             long position = transport().position(SystemClock.uptimeMillis()); int down = count("downs"); SystemClock.sleep(250);
             check(position > 0 && transport().position(SystemClock.uptimeMillis()) == position && count("downs") == down, "暂停位置漂移"); pass("暂停释放与位置保持");
-            runOnMainSync(service::toggle); await(() -> count("downs") > down, 1000, "续播没有重新按下剩余长音");
+            runOnMainSync(() -> { service.toggle(); service.confirmHalfState(false); }); await(() -> count("downs") > down, 1000, "续播没有重新按下剩余长音");
             runOnMainSync(service::stop); await(() -> held() == 0, 600, "停止未释放触摸");
             check(transport().position(SystemClock.uptimeMillis()) == 0, "停止未归零"); pass("续播、停止归零与释放");
 
             start("1:8"); runOnMainSync(service::stop); SystemClock.sleep(3200);
             check(count("downs") == down + 1, "取消倒计时后仍发送了触摸"); pass("倒计时取消");
+
+            int noteStart = list("pitches").size(), selectorStart = list("selectors").size();
+            start("-1 -#1 -#2 #1 #2 +#2 +#4 +2 1 1");
+            await(() -> !transport().active() && held() == 0, 12000, "组合变音未完成");
+            check(list("pitches").subList(noteStart, list("pitches").size()).equals(Arrays.asList(48, 49, 51, 61, 63, 75, 78, 74, 60, 60)), "组合变音音高不符：" + list("pitches"));
+            check(list("selectors").subList(selectorStart, list("selectors").size()).equals(Arrays.asList(Score.LOW, Score.HALF, Score.NATURAL, Score.HIGH, Score.HALF, Score.NATURAL)), "重复切换或互斥规则错误：" + list("selectors"));
+            check(count("selectorWhileHeld") == 0 && count("cancels") == 0, "变音与音键发生重叠触摸"); pass("三音区与半音组合、重复音不重复切换、先松音键再切换");
+
+            runOnMainSync(() -> find(keyboard.getWindow().getDecorView(), "半音").performClick());
+            check((Boolean) field(keyboard, "half"), "测试半音初态没有选中");
+            noteStart = list("pitches").size();
+            start("1 #1"); await(() -> !transport().active() && held() == 0, 6000, "半音初态选中时未完成");
+            check(list("pitches").subList(noteStart, list("pitches").size()).equals(Arrays.asList(60, 61)), "半音初态确认后音高错误"); pass("初始半音已选中时正确开关");
+
+            start("+#2:8");
+            await(() -> transport().state == Transport.State.PLAYING && (Boolean) field(service, "inFlight") && held() == 0, 4500, "未捕获变音点击阶段");
+            runOnMainSync(() -> service.pause("变音点击期间暂停"));
+            int interruptedNotes = count("downs"); SystemClock.sleep(250);
+            check(!transport().active() && count("downs") == interruptedNotes && !((ToneState) field(service, "tones")).known(), "旧变音回调继续发键或恢复过期状态");
+            runOnMainSync(() -> { service.toggle(); check((Boolean) field(service, "awaitingHalf"), "中断后未重新确认半音"); service.confirmHalfState((Boolean) field(keyboard, "half")); });
+            await(() -> held() == 1, 1000, "变音中断后无法续播");
+            check(list("pitches").get(list("pitches").size() - 1) == 75, "变音中断后续播音高错误");
+            runOnMainSync(service::stop); await(() -> held() == 0, 600, "变音续播后停止未释放"); pass("变音点击中暂停、旧回调失效及重新同步续播");
+
+            noteStart = list("pitches").size();
+            start("1:1/4 +#2:1/4 -#1:1/4 #1:1/4 2:1/4");
+            await(() -> !transport().active() && held() == 0, 6500, "短音变音未完成");
+            check(list("pitches").subList(noteStart, list("pitches").size()).equals(Arrays.asList(60, 75, 49, 61, 62)), "切换耗时吞掉短音"); pass("密集跨音区半音不丢短音");
             runOnMainSync(() -> calibrate("test.invalid.package", rotation)); start("1"); SystemClock.sleep(200);
             check(!transport().active() && held() == 0, "目标应用不匹配仍开始演奏"); pass("目标应用检查");
             runOnMainSync(() -> calibrate(keyboard.getPackageName(), (rotation + 1) % 4)); start("1"); SystemClock.sleep(200);
@@ -115,7 +167,29 @@ public final class GestureSmokeTest extends Instrumentation {
         result.putString("stream", "\n" + report); finish(code, result);
     }
     private void calibrate(String target, int direction) { settings.calibrate(target, size.x, size.y, direction, points); }
-    private void start(String notes) { runOnMainSync(() -> { service.load(Score.jianpu(notes, 120, "触摸回归测试")); service.toggle(); }); }
+    private void start(String notes) {
+        runOnMainSync(service::stop);
+        // 键盘收到 UP 时系统完成回调可能仍在队列中；下一首需等待服务确认释放。
+        await(() -> !(Boolean) field(service, "inFlight") && field(service, "held") == null, 1000, "切歌前触摸未释放");
+        runOnMainSync(() -> { service.load(Score.jianpu(notes, 120, "触摸回归测试")); service.toggle(); service.confirmHalfState((Boolean) field(keyboard, "half")); });
+    }
+    private void tap(PointF point) {
+        long now = SystemClock.uptimeMillis();
+        MotionEvent down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, point.x, point.y, 0);
+        MotionEvent up = MotionEvent.obtain(now, now + 50, MotionEvent.ACTION_UP, point.x, point.y, 0);
+        try { sendPointerSync(down); sendPointerSync(up); waitForIdleSync(); } finally { down.recycle(); up.recycle(); }
+    }
+    private void saveScreen(String name) throws java.io.IOException {
+        // 仅测试入口保存自建界面截图；应用正常演奏不会截图。
+        SystemClock.sleep(4000); // 等待前一步故意触发的校准提示消失，避免挡住截图。
+        android.graphics.Bitmap bitmap = getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES).takeScreenshot();
+        if (bitmap == null) throw new AssertionError("测试截图失败");
+        try (java.io.FileOutputStream output = new java.io.FileOutputStream(new java.io.File(getTargetContext().getExternalFilesDir(null), name))) {
+            check(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output), "测试截图保存失败");
+        } finally { bitmap.recycle(); }
+    }
+    @SuppressWarnings("unchecked")
+    private List<Integer> list(String name) { return new ArrayList<>((List<Integer>) field(keyboard, name)); }
     private void await(BooleanSupplier condition, long timeout, String failure) {
         long end = SystemClock.uptimeMillis() + timeout;
         while (SystemClock.uptimeMillis() < end) { final boolean[] value = {false}; runOnMainSync(() -> value[0] = condition.getAsBoolean()); if (value[0]) return; SystemClock.sleep(30); }

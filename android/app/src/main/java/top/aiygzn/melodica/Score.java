@@ -10,7 +10,9 @@ import java.util.regex.Pattern;
 /** 与安卓界面无关的曲谱、旋律整理和八键映射。 */
 public final class Score {
     public static final int[] SCALE = {0, 2, 4, 5, 7, 9, 11, 12};
-    public static final String[] LABELS = {"1", "2", "3", "4", "5", "6", "7", "高1", "低八度", "高八度", "升半音"};
+    public static final int LOW = 8, HIGH = 9, HALF = 10, NATURAL = 11;
+    public static final String[] LABELS = {"1", "2", "3", "4", "5", "6", "7", "高1", "降调", "升调", "半音", "自然音"};
+    public static final int[] CALIBRATION_ORDER = {0, 1, 2, 3, 4, 5, 6, 7, HALF, HIGH, NATURAL, LOW};
     public static final String STAR = "1 1 5 5 6 6 5:2 | 4 4 3 3 2 2 1:2 | 5 5 4 4 3 3 2:2 | 5 5 4 4 3 3 2:2 | 1 1 5 5 6 6 5:2 | 4 4 3 3 2 2 1:2";
     public static final class Note {
         public final long start, end;
@@ -100,13 +102,7 @@ public final class Score {
     public static final class Fingering {
         public final int key, octave, half, pitch;
         Fingering(int key, int octave, int half, int pitch) { this.key = key; this.octave = octave; this.half = half; this.pitch = pitch; }
-        public int[] points() {
-            int[] points = new int[1 + (octave != 0 ? 1 : 0) + half];
-            points[0] = key;
-            if (octave != 0) points[1] = octave < 0 ? 8 : 9;
-            if (half != 0) points[points.length - 1] = 10;
-            return points;
-        }
+        public int tonePoint() { return octave < 0 ? LOW : octave > 0 ? HIGH : NATURAL; }
     }
     public static Fingering map(int pitch, int base, boolean low, boolean high, boolean half) {
         Fingering best = null; int cost = Integer.MAX_VALUE;
@@ -120,7 +116,7 @@ public final class Score {
                 if (score < cost) { cost = score; best = new Fingering(key, octave, sharp, candidate); }
             }
         }
-        if (best == null) throw new IllegalArgumentException("曲目含半音：请校准并启用升半音长按键，或换一首自然音阶曲目");
+        if (best == null) throw new IllegalArgumentException("当前映射范围无法表达曲目中的半音");
         return best;
     }
 }

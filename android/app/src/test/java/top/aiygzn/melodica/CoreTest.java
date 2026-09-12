@@ -25,6 +25,42 @@ public class CoreTest {
         assertEquals(1, Score.map(61, 60, false, false, true).half);
         assertThrows(IllegalArgumentException.class, () -> Score.map(61, 60, false, false, false));
     }
+    @Test public void toneSelectionIsExclusiveAndHalfIndependent() {
+        ToneState state = new ToneState(); state.confirmHalf(false);
+        Score.Fingering lowHalf = Score.map(49, 60, true, true, true);
+        assertEquals(Score.LOW, state.next(lowHalf)); state.applied(Score.LOW);
+        assertEquals(Score.HALF, state.next(lowHalf)); state.applied(Score.HALF);
+        assertEquals(-1, state.next(lowHalf));
+        Score.Fingering highHalf = Score.map(75, 60, true, true, true);
+        assertEquals(Score.HIGH, state.next(highHalf)); state.applied(Score.HIGH);
+        assertEquals(-1, state.next(highHalf));
+        Score.Fingering naturalHalf = Score.map(61, 60, true, true, true);
+        assertEquals(Score.NATURAL, state.next(naturalHalf)); state.applied(Score.NATURAL);
+        assertEquals(-1, state.next(naturalHalf));
+        Score.Fingering natural = Score.map(60, 60, true, true, true);
+        assertEquals(Score.HALF, state.next(natural)); state.applied(Score.HALF);
+        assertEquals(-1, state.next(natural));
+    }
+    @Test public void toneNeedsConfirmationAfterInterruption() {
+        ToneState state = new ToneState(); Score.Fingering natural = Score.map(60, 60, true, true, true);
+        assertThrows(IllegalStateException.class, () -> state.next(natural));
+        state.confirmHalf(true); assertEquals(Score.NATURAL, state.next(natural));
+        // 未收到点击完成之前，同一步仍然待执行。
+        assertEquals(Score.NATURAL, state.next(natural)); state.applied(Score.NATURAL);
+        assertEquals(Score.HALF, state.next(natural));
+        state.invalidate(); assertFalse(state.known());
+        assertThrows(IllegalStateException.class, () -> state.applied(Score.HALF));
+        state.confirmHalf(false); assertEquals(Score.NATURAL, state.next(natural));
+    }
+    @Test public void selectorTimeDoesNotConsumeShortNotes() {
+        Transport p = new Transport(1000, 2); p.play(100, 0);
+        p.holdClock(125); assertEquals(50, p.position(1000));
+        p.holdClock(1100); p.update(1200); assertTrue(p.active());
+        p.resumeClock(1300); assertEquals(100, p.position(1325));
+        p.holdClock(1325); p.pause(1500); assertEquals(100, p.position(2000));
+        p.play(2100, 0); assertEquals(200, p.position(2150));
+        p.holdClock(2150); p.stop(); p.play(2500, 0); assertEquals(100, p.position(2550));
+    }
     @Test public void melodyDoesNotRefillAccompaniment() {
         Score s = new Score("和弦", Arrays.asList(new Score.Note(0, 2000, 48, 0), new Score.Note(10, 600, 72, 0), new Score.Note(800, 1000, 72, 0)), 2200).melody(0);
         assertEquals(2, s.notes.size()); assertEquals(72, s.notes.get(0).pitch);
