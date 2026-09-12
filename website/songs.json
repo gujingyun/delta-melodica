@@ -1,5 +1,27 @@
 {
-  "version": 1,
+  "version": 2,
   "updated_at": "2026-09-12",
-  "songs": []
+  "songs": [
+    {
+      "id": "hua-hai",
+      "title": "花海",
+      "url": "songs/%E8%8A%B1%E6%B5%B7.mid",
+      "size": 151976,
+      "sha256": "E46A3364D9C3E3B079CCADEB818A2C75569F92BF3D3F0C2FED682FD127D3ED8B"
+    },
+    {
+      "id": "huang",
+      "title": "荒",
+      "url": "songs/%E8%8D%92.mid",
+      "size": 22737,
+      "sha256": "B406B4F97AD38EBA5F60E97853F291CE2B2F5B27DC72B3AA86FE3D2C3CCB673C"
+    },
+    {
+      "id": "jimo-ren-shangxin-ge-175",
+      "title": "寂寞的人伤心的歌（得吃小曲是1.75倍速）",
+      "url": "songs/%E5%AF%82%E5%AF%9E%E7%9A%84%E4%BA%BA%E4%BC%A4%E5%BF%83%E7%9A%84%E6%AD%8C%EF%BC%88%E5%BE%97%E5%90%83%E5%B0%8F%E6%9B%B2%E6%98%AF1.75%E5%80%8D%E9%80%9F%EF%BC%89.mid",
+      "size": 7788,
+      "sha256": "62E7DB01BD2D05C1DE73EB4BC1258A5EC834A4BDD1BB5BC7DBFFA26AA1633C96"
+    }
+  ]
 }
