@@ -39,7 +39,7 @@ public final class MelodicaService extends AccessibilityService {
     private LinearLayout panel;
     private WindowManager.LayoutParams panelParams;
     private TextView status;
-    private Button play;
+    private Button play, collapse;
     private LinearLayout halfConfirmation;
     private boolean awaitingHalf;
     private final ToneState tones = new ToneState();
@@ -108,7 +108,7 @@ public final class MelodicaService extends AccessibilityService {
         play = button(row, "播放", this::toggle);
         button(row, "停止", this::stop);
         button(row, "校准", this::startCalibration);
-        button(row, "收起", () -> { stop(); hidePanel(); });
+        collapse = button(row, "收起", () -> { if (canCollapse()) { stop(); hidePanel(); } });
         halfConfirmation = new LinearLayout(this); halfConfirmation.setOrientation(LinearLayout.VERTICAL);
         TextView question = new TextView(this); question.setText("游戏内「半音」当前是否选中？"); question.setTextColor(Color.WHITE); question.setTextSize(13); halfConfirmation.addView(question);
         LinearLayout choices = new LinearLayout(this); halfConfirmation.addView(choices);
@@ -141,10 +141,15 @@ public final class MelodicaService extends AccessibilityService {
     public void hidePanel() {
         dismissHalfConfirmation();
         closeCalibration();
-        if (panel != null) { windows.removeView(panel); panel = null; status = null; play = null; halfConfirmation = null; }
+        if (panel != null) { windows.removeView(panel); panel = null; status = null; play = null; collapse = null; halfConfirmation = null; }
+    }
+    private boolean canCollapse() {
+        // 实际手指触碰可能先取消演奏手势；该次触碰仍不能把刚暂停的悬浮窗收起。
+        return (transport == null || !transport.active()) && !inFlight && held == null && SystemClock.uptimeMillis() - cancelledAt >= 400;
     }
     private void render() {
         if (status == null) return;
+        collapse.setEnabled(canCollapse()); collapse.setAlpha(canCollapse() ? 1f : .35f);
         String detail = message;
         if (transport != null && score != null) {
             long now = SystemClock.uptimeMillis();
@@ -190,7 +195,7 @@ public final class MelodicaService extends AccessibilityService {
         if (transport == null || transport.active() || inFlight || held != null || !validateStart()) return;
         tones.confirmHalf(selected);
         transport.play(SystemClock.uptimeMillis(), transport.state == Transport.State.PAUSED ? 0 : 3000);
-        message = "正在演奏"; schedule(0);
+        message = "正在演奏"; render(); schedule(0);
     }
     private boolean covers(PointF p) {
         if (panel == null || panel.getVisibility() != View.VISIBLE) return false;
@@ -296,6 +301,7 @@ public final class MelodicaService extends AccessibilityService {
                     if (!continued) { held = null; heldIndex = -1; }
                     if (completed != null) completed.run();
                     if (transport != null && transport.active()) schedule(settle); else release();
+                    render();
                 }
                 @Override public void onCancelled(GestureDescription gesture) {
                     if (destroyed || serial != gestureSerial) return;

@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
     <application android:label="三角洲口风琴" android:theme="@style/AppTheme"
-        android:icon="@drawable/ic_melodica" android:allowBackup="false" android:supportsRtl="true">
+        android:icon="@drawable/ic_melodica" android:allowBackup="false" android:supportsRtl="true" android:usesCleartextTraffic="false">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -9,6 +10,7 @@
             </intent-filter>
         </activity>
         <activity android:name=".TouchTestActivity" android:exported="false" android:screenOrientation="landscape" />
+        <activity android:name=".OnlineLibraryActivity" android:exported="false" />
         <service android:name=".MelodicaService" android:exported="true"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:label="三角洲口风琴 · 演奏服务">
             <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>

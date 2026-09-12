@@ -28,13 +28,16 @@ public final class GestureSmokeTest extends Instrumentation {
     private Point size;
     private int rotation;
     private PointF[] points;
+    private boolean onlineOnly;
     private final StringBuilder report = new StringBuilder();
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); start(); }
+    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); onlineOnly = "online".equals(arguments.getString("suite")); start(); }
     @Override public void onStart() {
         SharedPreferences prefs = getTargetContext().getSharedPreferences("melodica", 0);
         Map<String, ?> previous = new HashMap<>(prefs.getAll());
         Bundle result = new Bundle(); int code = Activity.RESULT_OK;
         try {
+            if (onlineOnly) { new OnlineUiChecks(this, report).run(); }
+            else {
             android.app.UiAutomation automation = getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);
             startActivitySync(new Intent(getTargetContext(), MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             // instrumentation 会重启目标进程，系统将原服务记作崩溃；只重连原本已开启的本服务。
@@ -92,13 +95,21 @@ public final class GestureSmokeTest extends Instrumentation {
             runOnMainSync(service::stop); pass("半音未确认时不演奏");
             // 重复音、休止和长音必须产生完整 DOWN / UP，续接不能成为空事件。
             start("1 1:2 0 2");
+            runOnMainSync(() -> {
+                View collapse = find((View) field(service, "panel"), "收起");
+                check(!collapse.isEnabled(), "倒计时中收起未禁用"); collapse.performClick();
+                check(field(service, "panel") != null && transport().active(), "收起入口绕过了播放保护");
+            });
             await(() -> count("ups") == 3, 7000, "完整演奏没有收到三个抬起事件");
             check(count("downs") == 3 && count("cancels") == 0 && held() == 0, "重复音或长按出现丢失／取消"); pass("重复音、休止、连续长按");
+            await(() -> !transport().active() && find((View) field(service, "panel"), "收起").isEnabled(), 500, "播放完成后收起未恢复");
+            pass("倒计时禁用收起、播放结束恢复");
 
             start("1:8 2"); await(() -> held() == 1, 4500, "长音未按下"); SystemClock.sleep(150);
             runOnMainSync(() -> service.pause("测试暂停")); await(() -> held() == 0, 600, "暂停未释放触摸");
             long position = transport().position(SystemClock.uptimeMillis()); int down = count("downs"); SystemClock.sleep(250);
             check(position > 0 && transport().position(SystemClock.uptimeMillis()) == position && count("downs") == down, "暂停位置漂移"); pass("暂停释放与位置保持");
+            check(find((View) field(service, "panel"), "收起").isEnabled(), "暂停后收起未恢复");
             runOnMainSync(() -> { service.toggle(); service.confirmHalfState(false); }); await(() -> count("downs") > down, 1000, "续播没有重新按下剩余长音");
             runOnMainSync(service::stop); await(() -> held() == 0, 600, "停止未释放触摸");
             check(transport().position(SystemClock.uptimeMillis()) == 0, "停止未归零"); pass("续播、停止归零与释放");
@@ -133,6 +144,19 @@ public final class GestureSmokeTest extends Instrumentation {
             start("1:1/4 +#2:1/4 -#1:1/4 #1:1/4 2:1/4");
             await(() -> !transport().active() && held() == 0, 6500, "短音变音未完成");
             check(list("pitches").subList(noteStart, list("pitches").size()).equals(Arrays.asList(60, 75, 49, 61, 62)), "切换耗时吞掉短音"); pass("密集跨音区半音不丢短音");
+            start("1:16"); await(() -> held() == 1, 4500, "收起禁用测试前未按下音键");
+            final PointF[] collapsePoint = new PointF[1];
+            runOnMainSync(() -> {
+                View collapse = find((View) field(service, "panel"), "收起"); check(!collapse.isEnabled(), "演奏中收起未禁用");
+                int[] p = new int[2]; collapse.getLocationOnScreen(p); collapsePoint[0] = new PointF(p[0] + collapse.getWidth() / 2f, p[1] + collapse.getHeight() / 2f);
+            });
+            saveScreen("collapse-disabled-v03.png");
+            tap(collapsePoint[0]);
+            check(field(service, "panel") != null, "手指点击禁用按钮后悬浮窗消失");
+            runOnMainSync(service::stop);
+            await(() -> find((View) field(service, "panel"), "收起").isEnabled(), 1000, "停止后收起未恢复");
+            runOnMainSync(() -> { find((View) field(service, "panel"), "收起").performClick(); check(field(service, "panel") == null, "停止后无法收起"); service.showPanel(); });
+            pass("真实触摸不能收起演奏悬浮窗、停止后可收起");
             runOnMainSync(() -> calibrate("test.invalid.package", rotation)); start("1"); SystemClock.sleep(200);
             check(!transport().active() && held() == 0, "目标应用不匹配仍开始演奏"); pass("目标应用检查");
             runOnMainSync(() -> calibrate(keyboard.getPackageName(), (rotation + 1) % 4)); start("1"); SystemClock.sleep(200);
@@ -141,6 +165,7 @@ public final class GestureSmokeTest extends Instrumentation {
             start("1:8"); await(() -> held() == 1, 4500, "切出测试前未按下音键");
             runOnMainSync(keyboard::finish);
             await(() -> held() == 0 && !transport().active(), 1000, "离开测试窗口未暂停释放"); pass("切出窗口暂停释放");
+            }
         } catch (Throwable error) {
             code = Activity.RESULT_CANCELED; report.append("失败：").append(error).append('\n');
             android.util.Log.e("MelodicaSmoke", "测试失败", error);

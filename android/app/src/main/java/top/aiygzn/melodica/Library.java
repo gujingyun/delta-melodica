@@ -6,6 +6,7 @@ import org.json.JSONObject;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -14,7 +15,8 @@ import java.util.UUID;
 /** 保存解析后的曲谱副本，文件选择器中的原始文件保持原样。 */
 public final class Library {
     private final File folder;
-    public Library(Context context) { folder = new File(context.getFilesDir(), "songs"); folder.mkdirs(); }
+    public Library(Context context) { this(new File(context.getFilesDir(), "songs")); }
+    Library(File folder) { this.folder = folder; folder.mkdirs(); }
     public static final class Entry {
         public final String id, title;
         Entry(String id, String title) { this.id = id; this.title = title; }
@@ -47,13 +49,26 @@ public final class Library {
         return new Score(json.getString("title"), notes, json.getLong("duration"));
     }
     public String save(Score score) throws Exception {
+        return save(score, UUID.randomUUID() + ".json");
+    }
+    public String onlineId(String songId) {
+        return UUID.nameUUIDFromBytes((OnlineLibrary.CATALOG_URL + "#" + songId).getBytes(StandardCharsets.UTF_8)) + ".json";
+    }
+    public boolean hasOnline(String songId) { return new File(folder, onlineId(songId)).isFile(); }
+    public String saveOnline(String songId, Score score) throws Exception {
+        OnlineLibrary.checkCancelled(); return save(score, onlineId(songId));
+    }
+    private String save(Score score, String id) throws Exception {
         JSONArray notes = new JSONArray();
         for (Score.Note n : score.notes) notes.put(new JSONArray().put(n.start).put(n.end).put(n.pitch).put(n.track));
         JSONObject json = new JSONObject().put("title", score.title).put("duration", score.duration).put("notes", notes);
-        String id = UUID.randomUUID() + ".json";
-        File temp = new File(folder, id + ".tmp"), target = new File(folder, id);
-        Files.write(temp.toPath(), json.toString().getBytes(StandardCharsets.UTF_8));
-        Files.move(temp.toPath(), target.toPath());
+        File temp = File.createTempFile(".download-", ".tmp", folder), target = new File(folder, id);
+        try {
+            Files.write(temp.toPath(), json.toString().getBytes(StandardCharsets.UTF_8));
+            OnlineLibrary.checkCancelled();
+            try { Files.move(temp.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING); }
+            catch (java.nio.file.AtomicMoveNotSupportedException e) { Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING); }
+        } finally { Files.deleteIfExists(temp.toPath()); }
         return id;
     }
 }

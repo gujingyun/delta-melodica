@@ -55,7 +55,7 @@ public final class MainActivity extends Activity {
         serviceStatus = text(setup, "", 14, Color.WHITE);
         text(setup, "开启后可显示悬浮控制条，并按曲谱长按音键。仅在你点击播放后工作。", 12, 0xffa7bebc);
         action(setup, "开启无障碍服务", () -> new AlertDialog.Builder(this).setTitle("开启演奏服务")
-            .setMessage("本工具使用无障碍手势，在你标记的音键位置发送触摸。读取窗口所属应用用于切出暂停；不读取文字、不截图、不联网。\n\n请在接下来的系统页面找到「三角洲口风琴 · 演奏服务」并手动开启。")
+            .setMessage("本工具使用无障碍手势，在你标记的音键位置发送触摸。读取窗口所属应用用于切出暂停；不读取文字、不截图。线上曲库会联网下载目录和 MIDI，不上传本地曲谱或设置。\n\n请在接下来的系统页面找到「三角洲口风琴 · 演奏服务」并手动开启。")
             .setPositiveButton("前往系统设置", (d, w) -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)))
             .setNegativeButton("取消", null).show(), false);
         LinearLayout libraryCard = card("02  选择一首曲目");
@@ -65,6 +65,7 @@ public final class MainActivity extends Activity {
         LinearLayout importRow = new LinearLayout(this); libraryCard.addView(importRow);
         action(importRow, "导入 MIDI / 简谱", this::importFile, false);
         action(importRow, "输入简谱", this::editScore, false);
+        action(libraryCard, "线上曲库", () -> startActivityForResult(new Intent(this, OnlineLibraryActivity.class), 11), false);
         LinearLayout params = card("03  调整演奏");
         text(params, "速度倍率", 12, 0xffa7bebc);
         Spinner speeds = new Spinner(this); params.addView(speeds);
@@ -85,7 +86,7 @@ public final class MainActivity extends Activity {
         action(launch, "显示悬浮控制条", () -> { if (service()) { prepare(); MelodicaService.instance.showPanel(); toast("已显示，请进入游戏演奏画面"); } }, true);
         action(launch, "打开本地测试键盘", () -> { if (MelodicaService.instance != null) { prepare(); MelodicaService.instance.showPanel(); } startActivity(new Intent(this, TouchTestActivity.class)); }, false);
         action(launch, "停止并关闭演奏服务", () -> { if (MelodicaService.instance != null) { MelodicaService.instance.stop(); MelodicaService.instance.disableSelf(); } serviceStatus.setText("服务已关闭"); }, false);
-        text(content, "预览版 0.2  ·  Android 8.0+\n支持 MIDI 0/1 与文本简谱、点击选中式变音。升级后请重新完成 12 点校准。", 11, 0xff789795);
+        text(content, "预览版 0.3  ·  Android 8.0+\n线上曲库支持搜索、分页与下载；倒计时和演奏期间禁用收起。已有 12 点校准可继续使用。", 11, 0xff789795);
         songs.setOnItemSelectedListener(listener(this::selectSong));
         refreshLibrary(); updateStatus();
     }
@@ -175,6 +176,9 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == 11 && result == RESULT_OK && data != null && data.getStringExtra("songId") != null) {
+            settings.selected(data.getStringExtra("songId")); refreshLibrary(); toast("已选用线上曲目，可离线演奏"); return;
+        }
         if (request != 10 || result != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData(); toast("正在导入曲谱…");
         new Thread(() -> {
