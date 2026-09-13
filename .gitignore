@@ -21,3 +21,6 @@ server/.env
 server/*.env
 otp-secret
 node_modules/
+
+# 本机协作与服务器说明仅保留在本地。
+/AGENTS.md
