@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from app import App
-from resource_search import SearchPage, SearchSong
+from resource_search import SearchPage, SearchSong, SiteAccessError, search_url
 from test_online_library import midi_bytes
 
 
@@ -243,6 +243,88 @@ class ResourceSearchDialogTests(unittest.TestCase):
         with patch("resource_search_ui.webbrowser.open") as open_page:
             self.dialog.open_source()
         open_page.assert_called_once_with(song.page_url)
+
+    def blocked_midishow(self, songs=()):
+        for enabled in self.dialog.enabled.values():
+            enabled.set(True)
+        def search(source, query, page):
+            if source == "midishow":
+                raise SiteAccessError("需要浏览器人机验证；请在源站完成验证、下载后导入。")
+            return SearchPage(list(songs) if source == "midiworld" else [])
+        with patch("resource_search.search_source", side_effect=search):
+            self.dialog.query.set("父亲")
+            self.dialog.search()
+            self.wait_until(lambda: not self.dialog.pending)
+        self.root.update()
+
+    def test_blocked_midishow_is_not_reported_as_no_match_and_opens_correct_site(self):
+        self.blocked_midishow()
+        self.assertIn("人机验证", self.dialog.source_summary.get())
+        self.assertIn("尚未获取", self.dialog.status.get())
+        self.assertNotIn("未找到匹配", self.dialog.status.get())
+        self.assertTrue(self.dialog.midishow_button.winfo_ismapped())
+        # 已提交的查询与尚未搜索的新文字分开，网页应对应本次验证失败。
+        self.dialog.query.set("尚未搜索的新歌")
+        with patch("resource_search_ui.webbrowser.open") as open_page:
+            self.dialog.open_source()
+            self.dialog.midishow_button.invoke()
+        self.assertEqual([call.args[0] for call in open_page.call_args_list], [search_url("midishow", "父亲")] * 2)
+
+    def test_browser_fallback_preserves_other_songs_and_has_separate_action(self):
+        self.blocked_midishow([self.song()])
+        self.assertEqual(str(self.dialog.download_button["state"]), "normal")
+        self.assertEqual(len(self.dialog.songs), 1)
+        with patch("resource_search_ui.webbrowser.open") as open_page:
+            self.dialog.open_source()
+            self.dialog.open_midishow()
+        self.assertEqual([call.args[0] for call in open_page.call_args_list],
+                         [self.song().page_url, search_url("midishow", "父亲")])
+        for size in ("960x680", "860x630"):
+            self.dialog.dialog.geometry(size)
+            self.root.update()
+            self.assertGreaterEqual(self.dialog.tree.winfo_height(), 80)
+            for button in (self.dialog.midishow_button, self.dialog.download_button, self.dialog.preview_button):
+                self.assertTrue(button.winfo_ismapped())
+                self.assertLessEqual(button.winfo_rootx() + button.winfo_width(),
+                                     self.dialog.dialog.winfo_rootx() + self.dialog.dialog.winfo_width())
+                self.assertLessEqual(button.winfo_rooty() + button.winfo_height(),
+                                     self.dialog.dialog.winfo_rooty() + self.dialog.dialog.winfo_height())
+
+    def test_new_search_clears_old_browser_requirement(self):
+        self.blocked_midishow()
+        self.search([])
+        self.root.update()
+        self.assertFalse(self.dialog.browser_sources)
+        self.assertFalse(self.dialog.failed_sources)
+        self.assertFalse(self.dialog.midishow_button.winfo_ismapped())
+        self.assertIn("未找到匹配", self.dialog.status.get())
+        with patch("resource_search_ui.webbrowser.open") as open_page:
+            self.dialog.open_midishow()
+        open_page.assert_not_called()
+
+    def test_network_failure_is_not_reported_as_no_match(self):
+        with patch("resource_search.search_source", side_effect=TimeoutError("超时")):
+            self.dialog.query.set("父亲")
+            self.dialog.search()
+            self.wait_until(lambda: not self.dialog.pending)
+        self.assertNotIn("未找到匹配", self.dialog.status.get())
+        self.assertIn("不能确定", self.dialog.status.get())
+        self.assertFalse(self.dialog.browser_sources)
+        with patch("resource_search_ui.webbrowser.open") as open_page:
+            self.dialog.open_source()
+        open_page.assert_called_once_with(search_url("midiworld", "父亲"))
+
+    def test_verification_on_next_page_keeps_old_songs_and_stops_paging(self):
+        for source, enabled in self.dialog.enabled.items():
+            enabled.set(source == "midishow")
+        self.search([SearchSong("midishow", "旧结果", "https://www.midishow.com/midi/1.html")], more=True)
+        with patch("resource_search.search_source", side_effect=SiteAccessError("需要浏览器人机验证")):
+            self.dialog.load_more()
+            self.wait_until(lambda: not self.dialog.pending)
+        self.assertEqual(len(self.dialog.songs), 1)
+        self.assertFalse(self.dialog.more)
+        self.assertEqual(str(self.dialog.more_button["state"]), "disabled")
+        self.assertIn("midishow", self.dialog.browser_sources)
 
     def test_close_and_account_switch_cancel_work_and_ignore_late_download(self):
         self.search([self.song()])

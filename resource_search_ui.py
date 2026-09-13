@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 import webbrowser
 
-from resource_search import SOURCES, SearchCancelled, download_resource, search_all, search_url
+from resource_search import SOURCES, SearchCancelled, SearchProblem, download_resource, search_all, search_url
 
 
 def _download_worker(song, folder, mapping, cancel, events, preview, mode):
@@ -29,6 +29,7 @@ class ResourceSearchDialog:
         self.events = queue.Queue()
         self.pending, self.pages, self.more, self.songs = set(), {}, set(), {}
         self.source_status = {}
+        self.failed_sources, self.browser_sources = set(), set()
         self.downloading = False
         self.active_query = ""
         self.dialog = app._dialog("搜简谱 / MIDI", "960x680")
@@ -91,6 +92,7 @@ class ResourceSearchDialog:
         actions.pack(fill="x")
         ttk.Button(actions, text="打开源网页", command=self.open_source).pack(side="left")
         ttk.Button(actions, text="导入已下载 MIDI", command=self.import_downloaded).pack(side="left", padx=8)
+        self.midishow_button = ttk.Button(actions, text="去 MidiShow 搜索", command=self.open_midishow)
         self.download_button = ttk.Button(actions, text="下载并转换", command=self.download)
         self.download_button.pack(side="right")
         self.preview_button = ttk.Button(actions, text="下载后试听", command=lambda: self.download(True), style="Accent.TButton")
@@ -138,6 +140,10 @@ class ResourceSearchDialog:
         self.search_button.configure(state="disabled" if self.downloading else "normal")
         self.cancel_button.configure(state="normal" if self.pending else "disabled")
         self.rule_combo.configure(state="disabled" if self.downloading else "readonly")
+        if "midishow" in self.browser_sources:
+            self.midishow_button.pack(side="left", padx=(0, 8))
+        else:
+            self.midishow_button.pack_forget()
 
     def select(self, event=None):
         song = self.selected()
@@ -163,6 +169,8 @@ class ResourceSearchDialog:
         self.events = queue.Queue()
         self.active_query = query
         self.pages, self.more, self.songs, self.source_status = {}, set(), {}, {}
+        self.failed_sources.clear()
+        self.browser_sources.clear()
         self.tree.delete(*self.tree.get_children())
         self.detail.set("各站结果将陆续显示；选择曲目可查看下载方式。")
         self._start({source: 1 for source in sources})
@@ -173,6 +181,8 @@ class ResourceSearchDialog:
         self.requested_pages = pages
         for source in pages:
             self.source_status[source] = "搜索中…"
+            self.failed_sources.discard(source)
+            self.browser_sources.discard(source)
         self.status.set(f"正在搜索“{self.active_query}”…")
         self._summary()
         threading.Thread(target=search_all, args=(self.active_query, pages, self.search_cancel, self.events), daemon=True).start()
@@ -225,7 +235,13 @@ class ResourceSearchDialog:
                         continue
                     self.pending.remove(source)
                     if error:
-                        self.source_status[source] = f"不可用：{error[:130]}"
+                        self.failed_sources.add(source)
+                        self.more.discard(source)
+                        if isinstance(error, SearchProblem) and error.browser_required:
+                            self.browser_sources.add(source)
+                            self.source_status[source] = str(error)
+                        else:
+                            self.source_status[source] = f"不可用：{str(error)[:130]}"
                         self.app.log.warning("聚合搜索失败：来源=%s；%s", source, error)
                     else:
                         self.pages[source] = self.requested_pages[source]
@@ -246,8 +262,14 @@ class ResourceSearchDialog:
                         self.tree.selection_set(next(iter(self.songs)))
                         self.select()
                     if not self.pending and not self.downloading:
-                        self.status.set("搜索完成。选择曲目导入或试听；不可用的来源可重新搜索。" if self.songs
-                                        else "未找到匹配曲目。可换用别名、勾选 MIDI 来源，或打开源站；简谱空间曲目数量有限。")
+                        if "midishow" in self.browser_sources:
+                            self.status.set("MidiShow 的结果尚未获取。点击“去 MidiShow 搜索”，在网页验证并下载后导入。")
+                        elif self.failed_sources:
+                            self.status.set("部分来源未能获取结果；已显示的曲目可继续使用，也可打开源站查看。" if self.songs
+                                            else "部分来源未能获取结果，不能确定是否有匹配曲目；可打开源站查看或稍后重试。")
+                        else:
+                            self.status.set("搜索完成。选择曲目导入或试听。" if self.songs
+                                            else "未找到匹配曲目。可换用别名、勾选 MIDI 来源，或打开源站；简谱空间曲目数量有限。")
                     self._summary()
                 elif kind == "download":
                     song, path, preview, error = value
@@ -282,10 +304,19 @@ class ResourceSearchDialog:
         song = self.selected()
         if song:
             webbrowser.open(song.page_url)
+        elif self.active_query and (self.browser_sources or self.failed_sources):
+            sources = self.browser_sources or self.failed_sources
+            source = next(source for source in SOURCES if source in sources)
+            webbrowser.open(search_url(source, self.active_query))
         elif self.query.get().strip():
             source = next((source for source in ("jianpu", "midishow", "bitmidi", "midiworld", "official")
                            if self.enabled[source].get()), "midishow")
             webbrowser.open(search_url(source, self.query.get().strip()))
+
+    def open_midishow(self):
+        # 使用触发验证的本次查询，不随列表选曲或尚未提交的输入文字变化。
+        if self.active_query and "midishow" in self.browser_sources:
+            webbrowser.open(search_url("midishow", self.active_query))
 
     def import_downloaded(self):
         if self.downloading:

@@ -1,13 +1,15 @@
 """验证跨站搜索、失败隔离与下载转换，不依赖外部网络。"""
 from pathlib import Path
+import io
 import queue
 import tempfile
 import threading
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 from music import Mapping, compile_plan, read_midi
-from resource_search import (SearchCancelled, SearchPage, SearchSong, download_resource,
+from resource_search import (SearchCancelled, SearchPage, SearchProblem, SearchSong, SiteAccessError, download_resource,
                              parse_search_page, resolve_download, search_all, search_source, search_url)
 from test_online_library import Response, midi_bytes
 
@@ -59,8 +61,47 @@ class ResourceSearchTests(unittest.TestCase):
         with patch("resource_search.search_source", side_effect=search):
             search_all("测试", {"bitmidi": 1, "midiworld": 1}, threading.Event(), results)
         returned = dict((value[0], value[1:]) for _, value in (results.get(), results.get()))
-        self.assertEqual(returned["bitmidi"], (None, "超时"))
+        self.assertEqual(returned["bitmidi"], (None, SearchProblem("超时")))
         self.assertEqual(returned["midiworld"][0].songs[0].title, "测试曲")
+
+    def test_http_challenge_reports_browser_requirement_without_retry_or_empty_results(self):
+        body = io.BytesIO(b'<title>Just a moment...</title><script src="/cdn-cgi/challenge-platform/x"></script>')
+        error = urllib.error.HTTPError(search_url("midishow", "父亲"), 403, "Forbidden",
+                                       {"cf-mitigated": "challenge"}, body)
+        results = queue.Queue()
+        with patch("resource_search.urllib.request.urlopen", side_effect=error) as request:
+            search_all("父亲", {"midishow": 1}, threading.Event(), results)
+        request.assert_called_once()
+        _, (source, page, problem) = results.get_nowait()
+        self.assertEqual(source, "midishow")
+        self.assertIsNone(page)
+        self.assertTrue(problem.browser_required)
+        self.assertIn("人机验证", problem.message)
+        self.assertTrue(body.closed)
+
+    def test_http_200_verification_page_is_not_parsed_as_a_song_list(self):
+        for html, headers in ((b'<title>Just a moment...</title>cloudflare', {}),
+                              (b'Checking', {"cf-mitigated": "challenge"})):
+            with self.subTest(html=html), patch("resource_search.urllib.request.urlopen", return_value=Response(html, headers)):
+                with self.assertRaisesRegex(SiteAccessError, "人机验证"):
+                    search_source("midishow", "父亲")
+
+    def test_regular_page_with_cloudflare_script_is_still_searchable(self):
+        html = b'<title>Search</title><script src="/cdn-cgi/challenge-platform/x"></script><a href="/midi/1.html"><h3>Song</h3></a>'
+        with patch("resource_search.urllib.request.urlopen", return_value=Response(html)):
+            page = search_source("midishow", "Song")
+        self.assertEqual([song.title for song in page.songs], ["Song"])
+
+    def test_forbidden_and_rate_limit_have_different_actions(self):
+        for code, browser, message in ((403, True, "拒绝后台访问"), (429, False, "过于频繁"), (503, False, "HTTP 503")):
+            with self.subTest(code=code):
+                error = urllib.error.HTTPError(search_url("midishow", "父亲"), code, "Error", {}, io.BytesIO(b'Unavailable'))
+                results = queue.Queue()
+                with patch("resource_search.urllib.request.urlopen", side_effect=error):
+                    search_all("父亲", {"midishow": 1}, threading.Event(), results)
+                problem = results.get_nowait()[1][2]
+                self.assertEqual(problem.browser_required, browser)
+                self.assertIn(message, problem.message)
 
     def test_cancelled_search_does_not_post_old_results(self):
         cancel, results = threading.Event(), queue.Queue()
