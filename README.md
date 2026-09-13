@@ -1,5 +1,7 @@
 # 三角洲口风琴 v0.13
 
+账号与云端曲库正在接入三端，独立 SQLite 后端、邮箱验证码及部署配置见 [server/README.md](server/README.md)。游客保留本地导入、试听、演奏和公开线上曲库；私有云同步需要登录。正式发信需配置 SMTP。
+
 官网与最新版下载：<https://aiygzn.top/melodica/>
 
 Windows 本地 MIDI／简谱自动演奏工具，按三角洲行动口风琴的八个音键设计。

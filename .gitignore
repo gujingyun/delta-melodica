@@ -8,3 +8,10 @@ dist/
 .venv/
 work/
 releases/
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+server/.env
+server/*.env
+otp-secret
