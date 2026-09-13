@@ -62,6 +62,75 @@ class ResourceSearchDialogTests(unittest.TestCase):
         self.assertIn("已下载并转换", self.dialog.status.get())
         self.assertFalse(self.app.player.active)
 
+    def test_jianpu_import_uses_original_rhythm_and_remains_editable_after_reload(self):
+        from test_jianpu_search import score_page
+        from cloud_score import from_song
+        from music import parse_jianpu
+        song = SearchSong("jianpu", "文字简谱", "https://jianpu.space/songList/42")
+        self.search([song])
+        self.assertEqual(self.dialog.download_button["text"], "导入简谱")
+        with patch("resource_search._fetch_html", return_value=score_page("1_1_0 2-")):
+            self.dialog.download()
+            self.wait_until(lambda: not self.dialog.downloading)
+        self.assertEqual(self.app.title.get(), "文字简谱")
+        self.assertEqual(self.app.plan.style, "original")
+        self.assertEqual(len(self.app.plan.notes), 3)
+        self.assertIn("120 BPM", self.dialog.detail.get())
+        self.assertIn("1=C4", self.app.subtitle.get())
+        self.assertFalse(self.app.player.active)
+        path = self.app.current_source[1]
+        self.dialog.close()
+        self.app._load_library(path)
+        self.assertIn("120 BPM", self.app.subtitle.get())
+        self.app.edit_song()
+        editor = self.app.score_editor
+        self.assertEqual(from_song(parse_jianpu(editor.text.get("1.0", "end-1c"), float(editor.bpm.get()),
+                                               self.app.song.title, precise=True)), from_song(self.app.song))
+        editor.close(force=True)
+
+    def test_default_search_focuses_on_jianpu(self):
+        self.dialog.close()
+        self.dialog = self.app.resource_search_dialog()
+        self.assertEqual([source for source, enabled in self.dialog.enabled.items() if enabled.get()], ["jianpu"])
+
+    def test_invalid_jianpu_does_not_replace_current_song_or_preview(self):
+        from test_jianpu_search import score_page
+        self.search([SearchSong("jianpu", "无法识别", "https://jianpu.space/songList/42")])
+        original = self.app.current_source
+        with patch("resource_search._fetch_html", return_value=score_page("1 :| 2")), patch.object(self.app, "play") as play:
+            self.dialog.download(True)
+            self.wait_until(lambda: not self.dialog.downloading)
+        self.assertEqual(self.app.current_source, original)
+        play.assert_not_called()
+        self.assertFalse(self.dialog.closed)
+        self.assertIn("暂不支持", self.dialog.status.get())
+
+    def test_jianpu_preview_closes_dialog_before_local_play(self):
+        from test_jianpu_search import score_page
+        self.search([SearchSong("jianpu", "试听简谱", "https://jianpu.space/songList/42")])
+        def play(*, preview):
+            self.assertTrue(preview)
+            self.assertIsNone(self.root.grab_current())
+            self.assertEqual(self.app.title.get(), "试听简谱")
+            self.assertEqual(self.app.plan.style, "original")
+        with patch("resource_search._fetch_html", return_value=score_page("1_1_0 2-")), \
+                patch.object(self.app, "play", side_effect=play) as start:
+            self.dialog.download(True)
+            self.wait_until(lambda: self.dialog.closed)
+        start.assert_called_once_with(preview=True)
+
+    def test_download_result_does_not_replace_an_active_performance(self):
+        self.search([self.song()])
+        original = self.app.current_source
+        self.app.busy = True
+        self.dialog.events.put(("download", (self.song(), Path("later.mid"), True, None)))
+        with patch.object(self.app, "play") as play:
+            self.dialog._poll()
+        self.app.busy = False
+        self.assertEqual(self.app.current_source, original)
+        play.assert_not_called()
+        self.assertIn("结束当前演奏", self.dialog.status.get())
+
     def test_preview_closes_modal_before_playing_and_does_not_start_game_output(self):
         self.search([self.song()])
         destination = self.app.library_dir / "test__试听曲.mid"
