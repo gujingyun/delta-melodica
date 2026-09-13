@@ -119,6 +119,27 @@ class ResourceSearchDialogTests(unittest.TestCase):
             self.wait_until(lambda: self.dialog.closed)
         start.assert_called_once_with(preview=True)
 
+    def test_jianpu_with_lyric_key_change_imports_and_keeps_review_warning(self):
+        from test_jianpu_search import score_page
+        self.search([SearchSong("jianpu", "转调简谱", "https://jianpu.space/songList/42")])
+        text = '/key(A3)\nbpm108\n1_2_\nL:**\n0 1--ji1_2_\nL:"(+1key)甲"乙丙'
+        with patch("resource_search._fetch_html", return_value=score_page(text)):
+            self.dialog.download()
+            self.wait_until(lambda: not self.dialog.downloading)
+        self.assertEqual([n.pitch for n in self.app.song.notes], [57, 59, 58, 58, 60])
+        self.assertIn("转调", self.dialog.detail.get())
+        self.assertIn("ji", self.dialog.detail.get())
+        self.assertFalse(self.app.player.active)
+        path = self.app.current_source[1]
+        self.dialog.close()
+        self.app._load_library(path)
+        self.assertIn("转调", self.app.subtitle.get())
+        self.app.edit_song()
+        edited = self.app.score_editor.parsed()
+        self.assertEqual([n.pitch for n in edited.notes], [n.pitch for n in self.app.song.notes])
+        self.assertAlmostEqual(edited.duration, self.app.song.duration, places=3)
+        self.app.score_editor.close(force=True)
+
     def test_download_result_does_not_replace_an_active_performance(self):
         self.search([self.song()])
         original = self.app.current_source

@@ -1774,6 +1774,10 @@ def main():
                     elif source[0] == "file" and source[1].suffix.lower() == ".json":
                         data = json.loads(source[1].read_text(encoding="utf-8"))
                         if isinstance(data.get("jianpu_source"), dict):
+                            from cloud_score import from_song
+                            from music import parse_jianpu_space
+                            parsed, _ = parse_jianpu_space(data["jianpu_source"]["text"], data["title"])
+                            assert from_song(parsed) == from_song(to_song(data)), "原简谱解析结果与保存音符不一致"
                             assert compile_plan(to_song(data), app.mapping(), style="original").notes
                             assert parse_jianpu(data["editor"]["score"], data["editor"]["bpm"], precise=True).notes
                             jianpu_tested += 1

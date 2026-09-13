@@ -125,19 +125,49 @@ def parse_jianpu(text: str, bpm: float = 100, title: str = "自定义简谱", *,
     return Song(title.strip() or "自定义简谱", notes, duration=cursor)
 
 
+def _jianpu_lyric_key_changes(lines: list[tuple[int, str]]) -> dict[int, int]:
+    """按歌词音节定位转调；引号内文字、星号和下划线各占一个旋律音。"""
+    changes, position = {}, 0
+    # 覆盖汉字基本区、兼容区和扩展区，英文单词与标点沿用谱源的音节边界。
+    han = "\u2e80-\u2fff\u3005\u3007\u3021-\u3029\u3038-\u303b\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U000323af"
+    token_pattern = re.compile(rf'"(?:[^"]|"")+"|[{han}][^-\s{han}_*"]*|[^\s{han}_*\-"]+|[_*]|-')
+    change_pattern = re.compile(r"\(([升降+\-])(\d+)key\)", re.IGNORECASE)
+    for line_number, line in lines:
+        index = 0
+        while index < len(line):
+            if line[index].isspace():
+                index += 1
+                continue
+            match = token_pattern.match(line, index)
+            if not match:
+                raise ValueError(f"第 {line_number} 行歌词引号不完整，无法定位转调。")
+            token = match[0]
+            if token != "-":
+                commands = list(change_pattern.finditer(token))
+                if len(commands) > 1:
+                    raise ValueError(f"第 {line_number} 行同一音节含多个转调指令，请核对原谱。")
+                if commands:
+                    direction, value = commands[0].groups()
+                    changes[position] = int(value) * (1 if direction in ("升", "+") else -1)
+                position += 1
+            index = match.end()
+    return changes
+
+
 def parse_jianpu_space(text: str, title: str) -> tuple[Song, list[str]]:
     """读取简谱空间的文本记谱；不认识的演奏符号报错，避免静默漏音。"""
     if len(text) > 200000:
         raise ValueError("简谱文字不能超过 20 万个字符。")
     lines = unicodedata.normalize("NFKC", text).splitlines()
-    music_lines = []
+    music_lines, lyric_lines = [], []
     for line_number, line in enumerate(lines, 1):
         line = line.strip()
         if line.startswith("L:"):
-            if re.search(r"\([升降+\-]\d+key\)", line, re.IGNORECASE):
-                raise ValueError("此谱含歌词中的转调指令，暂不能直接导入，请打开源谱校对。")
+            lyric_lines.append((line_number, line[2:]))
             continue
         music_lines.append((line_number, line))
+    has_key_changes = any(re.search(r"\([升降+\-]\d+key\)", line, re.IGNORECASE) for _, line in lyric_lines)
+    key_changes = _jianpu_lyric_key_changes(lyric_lines) if has_key_changes else {}
     key_pattern = re.compile(r"/key\(([A-Ga-g])([#b]?)([0-9]?)\)")
     keys = {match.groups() for _, line in music_lines for match in key_pattern.finditer(line)}
     if len(keys) > 1:
@@ -154,8 +184,10 @@ def parse_jianpu_space(text: str, title: str) -> tuple[Song, list[str]]:
         warnings.append("谱中未标调号，按 1=C4 导入，可在主界面移调。")
     token_pattern = re.compile(r"(#{1,2}|b{1,2}|n)?([0-7]|-)((?:'+|,+)?)(-+|=*_?)(\.{0,2})")
     bar_pattern = re.compile(r"\|[|\]]?")
+    annotation_pattern = re.compile(r"[ac-mo-z]+")
     chord_pattern = re.compile(r"[A-G][#b]?(?:(?:maj|min|m|dim|aug|sus|add)?(?:[2-9]|11|13)?)(?:/[A-G][#b]?)?")
     notes, cursor, bpm, used_default_tempo = [], 0.0, 120.0, False
+    transpose, annotations = 0, []
     tempo_set, previous_is_note, skipped_chords = False, False, False
     for line_number, line in music_lines:
         if not line:
@@ -182,6 +214,12 @@ def parse_jianpu_space(text: str, title: str) -> tuple[Song, list[str]]:
                 continue
             match = token_pattern.match(line, index)
             if not match:
+                annotation = annotation_pattern.match(line, index)
+                if annotation:
+                    # 谱源允许混入普通字母说明；保留位置提示，不吞掉演奏符号或数字。
+                    annotations.append(f"第 {line_number} 行「{annotation[0][:20]}」")
+                    index += len(annotation[0])
+                    continue
                 raise ValueError(f"第 {line_number} 行第 {index + 1} 字附近「{line[index:index+16]}」含暂不支持的记谱，请打开源谱校对。")
             accidental, degree, octave, length, dots = match.groups()
             if degree in ("0", "-") and (accidental or octave):
@@ -202,8 +240,10 @@ def parse_jianpu_space(text: str, title: str) -> tuple[Song, list[str]]:
             elif degree == "0":
                 previous_is_note = False
             else:
+                transpose += key_changes.get(len(notes), 0)
                 pitch = base + SCALE[int(degree) - 1] + 12 * (octave.count("'") - octave.count(","))
                 pitch += (accidental or "").count("#") - (accidental or "").count("b")
+                pitch += transpose
                 if not 0 <= pitch <= 127:
                     raise ValueError(f"第 {line_number} 行音高超出 MIDI 0～127 的范围。")
                 notes.append(Note(cursor, end, pitch))
@@ -213,6 +253,12 @@ def parse_jianpu_space(text: str, title: str) -> tuple[Song, list[str]]:
                 raise ValueError("简谱最多支持 30000 个音符、30 分钟。")
     if not notes:
         raise ValueError("简谱中没有可演奏的音符。")
+    if key_changes and max(key_changes) >= len(notes):
+        raise ValueError("歌词中的转调指令没有对应音符，请核对原谱的歌词占位。")
+    if key_changes:
+        warnings.append(f"已按歌词对应音符处理 {len(key_changes)} 处转调。")
+    if annotations:
+        warnings.append(f"已忽略 {len(annotations)} 处普通字母：{'、'.join(annotations[:3])}，请对照源谱试听。")
     if used_default_tempo:
         warnings.insert(0, "未标速度的部分按 120 BPM 导入，可在编辑器调整。")
     if skipped_chords:

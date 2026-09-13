@@ -52,9 +52,35 @@ class JianpuNotationTests(unittest.TestCase):
         self.assertEqual(song.duration, 2.5)
         self.assertTrue(any("和弦" in warning for warning in warnings))
 
+    def test_lyric_transposition_starts_on_matched_note_after_intro_and_rests(self):
+        text = '/key(A3)\nbpm108\n1_2_3_\nL:"(前奏)"**\n0 1 2 | - 0 3 4\nL:"(+1key)甲"乙丙丁'
+        song, warnings = parse_jianpu_space(text, "转调")
+        self.assertEqual([n.pitch for n in song.notes], [57, 59, 61, 58, 60, 62, 63])
+        self.assertAlmostEqual(song.notes[4].end - song.notes[4].start, 120 / 108)
+        self.assertAlmostEqual(song.duration, 8.5 * 60 / 108)
+        self.assertTrue(any("转调" in warning for warning in warnings))
+
+    def test_lyric_placeholders_quotes_and_accumulated_key_changes(self):
+        text = '/key(C4)\nbpm120\n11111\nL:"合唱"*甲_"(升2key)乙"\n111\nL:"(降1key)丙"丁"(-1key)戊"'
+        song, _ = parse_jianpu_space(text, "连续转调")
+        self.assertEqual([n.pitch for n in song.notes], [60, 60, 60, 60, 62, 61, 61, 60])
+
+    def test_transposition_rejects_unmatched_instruction_and_pitch_overflow(self):
+        for text in ('1\nL:甲"(+1key)乙"', '/key(C9)\n7\nL:"(+12key)甲"',
+                     '1\nL:"(+1key)(+2key)甲"', '1\nL:"(+1key)甲'):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                parse_jianpu_space(text, "转调无效")
+
+    def test_stray_lowercase_annotation_warns_without_losing_notes_or_rhythm(self):
+        original, _ = parse_jianpu_space("bpm108\n1--1_2_|3", "原谱")
+        annotated, warnings = parse_jianpu_space("bpm108\n1--ji1_2_|3", "含杂字")
+        self.assertEqual(annotated.notes, original.notes)
+        self.assertEqual(annotated.duration, original.duration)
+        self.assertTrue(any("ji" in warning and "第 2 行" in warning for warning in warnings))
+
     def test_unsupported_notation_and_invalid_values_fail_instead_of_skipping(self):
         for text in ("1 :|", "1 (3 234)", "1 & 3", "1 /unknown(2)", "1__", "- 1", "#0 1",
-                     "1 b-", "1 8", "1\nL:字(升2key)", "/key(C)1 /key(D)2", "bpm 0\n1",
+                     "1 b-", "1 n", "1 jnb1", "1 8", "/key(C)1 /key(D)2", "bpm 0\n1",
                      "bpm 501\n1", "/key(C9)7'", "1" + "=" * 6, "1" + "-" * 64, "0 0"):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 parse_jianpu_space(text, "无效")
