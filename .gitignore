@@ -13,3 +13,10 @@ android/.idea/
 android/local.properties
 *.jks
 *.keystore
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+server/.env
+server/*.env
+otp-secret

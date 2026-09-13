@@ -1,0 +1,22 @@
+[Unit]
+Description=三角洲口风琴账号与云端曲库
+After=network.target
+
+[Service]
+Type=simple
+User=melodica-accounts
+Group=melodica-accounts
+WorkingDirectory=/opt/delta-melodica
+EnvironmentFile=/etc/delta-melodica-accounts.env
+ExecStart=/opt/delta-melodica/.venv/bin/uvicorn server.accounts:create_app --factory --host 127.0.0.1 --port 3003 --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-access-log
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/delta-melodica-accounts
+
+[Install]
+WantedBy=multi-user.target
