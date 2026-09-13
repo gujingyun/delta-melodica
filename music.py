@@ -11,6 +11,8 @@ import re
 import unicodedata
 
 SCALE = (0, 2, 4, 5, 7, 9, 11)
+JIANPU_SPACE_NOTE = re.compile(r"(#{1,2}|b{1,2}|n)?([0-7]|-)((?:'+|,+)?)(-+|=*_?)(\.{0,2})")
+JIANPU_SPACE_KEY = re.compile(r"/key\(([A-Ga-g])([#b]?)([0-9]?)\)")
 
 
 @dataclass(frozen=True)
@@ -142,32 +144,41 @@ def parse_jianpu(text: str, bpm: float = 100, title: str = "自定义简谱", *,
     return Song(title.strip() or "自定义简谱", notes, duration=cursor)
 
 
-def _jianpu_lyric_key_changes(lines: list[tuple[int, str]]) -> dict[int, int]:
-    """按歌词音节定位转调；引号内文字、星号和下划线各占一个旋律音。"""
-    changes, position = {}, 0
+def jianpu_lyric_syllables(line):
+    """预览与转调共用歌词分词；引号短语、星号、下划线各占一个音。"""
     # 覆盖汉字基本区、兼容区和扩展区，英文单词与标点沿用谱源的音节边界。
     han = "\u2e80-\u2fff\u3005\u3007\u3021-\u3029\u3038-\u303b\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U000323af"
     token_pattern = re.compile(rf'"(?:[^"]|"")+"|[{han}][^-\s{han}_*"]*|[^\s{han}_*\-"]+|[_*]|-')
+    index = 0
+    while index < len(line):
+        if line[index].isspace():
+            index += 1
+            continue
+        match = token_pattern.match(line, index)
+        if not match:
+            raise ValueError("歌词引号不完整，无法定位音节。")
+        if match[0] != "-":
+            yield match[0]
+        index = match.end()
+
+
+def _jianpu_lyric_key_changes(lines: list[tuple[int, str]]) -> dict[int, int]:
+    """按原谱歌词音节定位相对转调，不让休止或延音占用歌词编号。"""
+    changes, position = {}, 0
     change_pattern = re.compile(r"\(([升降+\-])(\d+)key\)", re.IGNORECASE)
     for line_number, line in lines:
-        index = 0
-        while index < len(line):
-            if line[index].isspace():
-                index += 1
-                continue
-            match = token_pattern.match(line, index)
-            if not match:
-                raise ValueError(f"第 {line_number} 行歌词引号不完整，无法定位转调。")
-            token = match[0]
-            if token != "-":
-                commands = list(change_pattern.finditer(token))
-                if len(commands) > 1:
-                    raise ValueError(f"第 {line_number} 行同一音节含多个转调指令，请核对原谱。")
-                if commands:
-                    direction, value = commands[0].groups()
-                    changes[position] = int(value) * (1 if direction in ("升", "+") else -1)
-                position += 1
-            index = match.end()
+        try:
+            tokens = list(jianpu_lyric_syllables(line))
+        except ValueError as error:
+            raise ValueError(f"第 {line_number} 行{error}") from None
+        for token in tokens:
+            commands = list(change_pattern.finditer(token))
+            if len(commands) > 1:
+                raise ValueError(f"第 {line_number} 行同一音节含多个转调指令，请核对原谱。")
+            if commands:
+                direction, value = commands[0].groups()
+                changes[position] = int(value) * (1 if direction in ("升", "+") else -1)
+            position += 1
     return changes
 
 
@@ -177,6 +188,22 @@ class _JianpuEvent:
     value: object = None
     line: int = 0
     position: int = -1
+    span: tuple[int, int] = (-1, -1)
+
+
+def jianpu_space_lines(text):
+    """全角字符按谱源语法归一化，同时保留每个字符在编辑文字中的位置。"""
+    offset = 0
+    for number, raw in enumerate(text.splitlines(keepends=True), 1):
+        characters, positions = [], []
+        for index, char in enumerate(raw):
+            normalized = unicodedata.normalize("NFKC", char)
+            characters.extend(normalized)
+            positions.extend([offset + index] * len(normalized))
+        line = "".join(characters)
+        left, right = len(line) - len(line.lstrip()), len(line.rstrip())
+        yield number, line[left:right], positions[left:right]
+        offset += len(raw)
 
 
 def _jianpu_repeats(events: list[_JianpuEvent]) -> list[_JianpuEvent]:
@@ -226,23 +253,21 @@ def _jianpu_repeats(events: list[_JianpuEvent]) -> list[_JianpuEvent]:
     return sequence()
 
 
-def parse_jianpu_space(text: str, title: str, *, mode="score") -> tuple[Song, list[str]]:
+def parse_jianpu_space(text: str, title: str, *, mode="score", trace=None) -> tuple[Song, list[str]]:
     """读取文字简谱；谱面模式补齐演奏结构，源站模式保留已核对的播放差异。"""
     if mode not in ("score", "source"):
         raise ValueError("请选择按谱面规则或跟随源站播放。")
     if len(text) > 200000:
         raise ValueError("简谱文字不能超过 20 万个字符。")
     music_lines, lyric_lines = [], []
-    for line_number, line in enumerate(unicodedata.normalize("NFKC", text).splitlines(), 1):
-        line = line.strip()
+    for line_number, line, positions in jianpu_space_lines(text):
         if line.startswith("L:"):
             lyric_lines.append((line_number, line[2:]))
         else:
-            music_lines.append((line_number, line))
+            music_lines.append((line_number, line, positions))
     has_changes = any(re.search(r"\([升降+\-]\d+key\)", line, re.IGNORECASE) for _, line in lyric_lines)
     key_changes = _jianpu_lyric_key_changes(lyric_lines) if has_changes else {}
-    key_pattern = re.compile(r"/key\(([A-Ga-g])([#b]?)([0-9]?)\)")
-    token_pattern = re.compile(r"(#{1,2}|b{1,2}|n)?([0-7]|-)((?:'+|,+)?)(-+|=*_?)(\.{0,2})")
+    key_pattern, token_pattern = JIANPU_SPACE_KEY, JIANPU_SPACE_NOTE
     bar_pattern = re.compile(r"\|[|\]]?")
     annotation_pattern = re.compile(r"[ac-mo-z]+")
     chord_pattern = re.compile(r"[A-G][#b]?(?:(?:maj|min|m|dim|aug|sus|add)?(?:[2-9]|11|13)?)(?:/[A-G][#b]?)?")
@@ -250,7 +275,7 @@ def parse_jianpu_space(text: str, title: str, *, mode="score") -> tuple[Song, li
     source_count, skipped_chords, ignored_structure = 0, False, False
     structures = {"|:": "repeat_start", ":|": "repeat_end", "[1": "ending1", "[2": "ending2",
                   "(": "slur_start", ")": "slur_end", "~": "tie"}
-    for line_number, line in music_lines:
+    for line_number, line, positions in music_lines:
         if not line:
             continue
         tempo = re.fullmatch(r"bpm\s*[:=]?\s*(\d+(?:\.\d+)?)", line, re.IGNORECASE)
@@ -317,7 +342,8 @@ def parse_jianpu_space(text: str, title: str, *, mode="score") -> tuple[Song, li
             beats *= 2 - 0.5 ** len(dots)
             offset = 12 * (octave.count("'") - octave.count(","))
             offset += (accidental or "").count("#") - (accidental or "").count("b")
-            events.append(_JianpuEvent("note", (degree, offset, beats), line_number, source_count))
+            events.append(_JianpuEvent("note", (degree, offset, beats), line_number, source_count,
+                                       (positions[index], positions[match.end()-1]+1)))
             if degree not in ("0", "-"):
                 source_count += 1
             index = match.end()
@@ -403,6 +429,8 @@ def parse_jianpu_space(text: str, title: str, *, mode="score") -> tuple[Song, li
                 continue
             degree, offset, beats = value
             end = cursor + beats * 60 / state["bpm"]
+            if trace is not None:
+                trace.append((*event.span, cursor, end))
             used_default_tempo |= not state["tempo_set"]
             used_default_key |= not state["key_set"]
             if degree == "-":
@@ -457,6 +485,35 @@ def parse_jianpu_space(text: str, title: str, *, mode="score") -> tuple[Song, li
     if skipped_chords:
         warnings.append("独立和弦标记不演奏，仅导入简谱主旋律。")
     return Song(title.strip() or "在线简谱", notes, duration=cursor), warnings
+
+
+def select_jianpu_space(text, title, start, end, *, mode="score"):
+    """从完整解析的时间轴裁出选中文字，保留上下文调号、歌词转调及反复次数。"""
+    trace = []
+    song, _ = parse_jianpu_space(text, title, mode=mode, trace=trace)
+    intervals = []
+    for left, right, onset, release in trace:
+        if left < end and right > start:
+            if left < start or right > end:
+                raise ValueError("请选中完整音符，包括升降号、八度点和时值符号。")
+            if intervals and abs(intervals[-1][1] - onset) < 1e-8:
+                intervals[-1] = (intervals[-1][0], release)
+            else:
+                intervals.append((onset, release))
+    notes, cursor = [], 0.0
+    starts = [note.start for note in song.notes]
+    for onset, release in intervals:
+        for index in range(max(0, bisect_right(starts, onset)-1), len(song.notes)):
+            note = song.notes[index]
+            if note.start >= release:
+                break
+            if note.start < release and note.end > onset:
+                notes.append(replace(note, start=cursor + max(note.start, onset) - onset,
+                                     end=cursor + min(note.end, release) - onset))
+        cursor += release - onset
+    if not notes:
+        raise ValueError("选中的内容没有可试听的音符。")
+    return Song(title, notes, song.tracks, cursor)
 
 
 

@@ -84,8 +84,9 @@ class ResourceSearchDialogTests(unittest.TestCase):
         self.assertIn("120 BPM", self.app.subtitle.get())
         self.app.edit_song()
         editor = self.app.score_editor
-        self.assertEqual(from_song(parse_jianpu(editor.text.get("1.0", "end-1c"), float(editor.bpm.get()),
-                                               self.app.song.title, precise=True)), from_song(self.app.song))
+        self.assertTrue(editor.is_source)
+        self.assertEqual(editor.text.get("1.0", "end-1c"), "1_1_0 2-")
+        self.assertEqual(from_song(editor.parsed()), {**from_song(self.app.song), "title": editor.name.get()})
         editor.close(force=True)
 
     def test_default_search_focuses_on_jianpu(self):
