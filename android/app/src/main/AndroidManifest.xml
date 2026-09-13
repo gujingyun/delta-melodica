@@ -11,6 +11,8 @@
         </activity>
         <activity android:name=".TouchTestActivity" android:exported="false" android:screenOrientation="landscape" />
         <activity android:name=".OnlineLibraryActivity" android:exported="false" />
+        <activity android:name=".SearchActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".ScoreEditorActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".AccountActivity" android:exported="false" />
         <service android:name=".MelodicaService" android:exported="true"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:label="三角洲口风琴 · 演奏服务">

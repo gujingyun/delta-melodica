@@ -70,7 +70,7 @@ public final class Library {
             if (matches(candidate)) return candidate;
         }
         if (editor != null) {
-            Document candidate = new Document(score, editor.optString("score"), editor.optDouble("bpm", 120), "precise", "", "简谱");
+            Document candidate = new Document(score, editor.optString("score"), editor.optDouble("bpm", 120), editor.optString("format").equals("jianpu_space") ? editor.optString("mode", "score") : "precise", editor.optString("source_url"), "简谱");
             if (matches(candidate)) return candidate;
         }
         Score melody = ScoreTools.melody(score, track, piano);
@@ -102,6 +102,31 @@ public final class Library {
         return save(document.score, id, extra);
     }
     public String saveImported(Score score, String kind) throws Exception { return save(score, UUID.randomUUID() + ".json", new JSONObject().put("kind", kind)); }
+    public String importBytes(byte[] bytes, String title) throws Exception { return importBytes(bytes, title, UUID.randomUUID() + ".json"); }
+    String importBytes(byte[] bytes, String title, String id) throws Exception {
+        if (bytes.length > 10 * 1024 * 1024) throw new IllegalArgumentException("文件不能超过 10 MB");
+        title = ResourceSearch.truncate(title.replaceFirst("(?i)\\.(midi?|txt|json)$", ""), 100).trim();
+        if (title.isEmpty()) title = "导入曲谱";
+        if (bytes.length >= 4 && bytes[0] == 'M' && bytes[1] == 'T' && bytes[2] == 'h' && bytes[3] == 'd') return save(MidiReader.read(bytes, title), id, new JSONObject().put("kind", "MIDI"));
+        String text = new String(bytes, StandardCharsets.UTF_8).replace("\ufeff", "");
+        if (text.trim().startsWith("{")) {
+            JSONObject json = new JSONObject(text); Score score = CloudScore.decode(json);
+            JSONObject source = json.optJSONObject("jianpu_source"), editor = json.optJSONObject("editor");
+            if (source != null) {
+                Document document = new Document(score, source.optString("text"), 120, source.optString("mode", "score"), source.optString("url"), "简谱");
+                if (matches(document)) return saveDocument(new Document(document.parse().score, document.text, document.bpm, document.mode, document.url, "简谱"), id);
+            }
+            if (editor != null) {
+                Document document = new Document(score, editor.optString("score"), editor.optDouble("bpm", 120), editor.optString("format").equals("jianpu_space") ? editor.optString("mode", "score") : "precise", editor.optString("source_url"), "简谱");
+                if (matches(document)) return saveDocument(new Document(document.parse().score, document.text, document.bpm, document.mode, document.url, "简谱"), id);
+            }
+            return save(score, id, new JSONObject().put("kind", "云端"));
+        }
+        if (bytes.length > 512000) throw new IllegalArgumentException("文本简谱过大");
+        boolean source = java.util.regex.Pattern.compile("(?im)/key|^\\s*bpm|^\\s*L:|[',=_~]").matcher(java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFKC)).find();
+        Score score = source ? Jianpu.source(text, title, "score").score : Jianpu.precise(text, 100, title).score;
+        return saveDocument(new Document(score, text, source ? 120 : 100, source ? "score" : "precise", "", "简谱"), id);
+    }
     public String onlineId(String songId) {
         return UUID.nameUUIDFromBytes((OnlineLibrary.CATALOG_URL + "#" + songId).getBytes(StandardCharsets.UTF_8)) + ".json";
     }

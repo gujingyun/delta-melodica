@@ -37,6 +37,7 @@ public final class AccountChecks extends Instrumentation {
             FakeServer server = new FakeServer();
             try {
                 Library guest = new Library(isolated); String name = guest.save(Score.jianpu("1 2 3", 100, "游客测试曲"));
+                Settings guestSettings = new Settings(isolated); guestSettings.selected(name); guestSettings.speed(1.75f); guestSettings.transpose(3);
                 Account first = new Account(isolated, server);
                 try {first.sync(); throw new AssertionError("游客可以云同步");} catch (IllegalStateException expected) { }
                 first.authenticate("register", "first@example.com", "test-password-123", "123456");
@@ -47,11 +48,16 @@ public final class AccountChecks extends Instrumentation {
                 first = new Account(isolated, server);
                 check(first.claimGuest() == 1, "游客继承未恢复"); check(first.claimGuest() == 0, "游客被重复继承");
                 check(new File(folder, "songs/" + name).isFile(), "游客原文件丢失");
+                Settings accountSettings = new Settings(isolated); accountSettings.selected(name);
+                check(accountSettings.speed() == 1.75 && accountSettings.transpose() == 3, "合并游客曲目没有继承每曲设置");
+                accountSettings.speed(.5f);
                 first.sync(); first.sync(); check(server.songs.get("first").size() == 1, "同步重试产生重复曲目");
                 report.append("通过：游客登录提示、Keystore 加密与恢复、继承断网重试、原文件保留、重复同步去重\n");
-                first.logout(); check(new Library(isolated).entries().size() == 1, "游客可见已归属曲目");
+                first.logout(); check(new Library(isolated).entries().size() == 2, "退出后原游客曲库不可见");
+                check(new Settings(isolated).speed() == 1.75, "账号修改串入游客设置");
                 first.authenticate("register", "second@example.com", "test-password-123", "123456");
                 check(first.claimGuest() == 0, "第二账号继承了第一账号曲目"); check(new Library(isolated).entries().size() == 1, "账号曲库串号");
+                Settings secondSettings = new Settings(isolated); secondSettings.selected(name); check(secondSettings.speed() == 1, "账号之间的每曲设置串号");
                 first.logout(); first.authenticate("login", "first@example.com", "test-password-123", "");
                 File local = new File(first.profile(), "songs/" + name); check(local.delete(), "测试副本未移除");
                 first.sync(); check(new Library(isolated).entries().size() == 2, "云端曲谱未下载到账号曲库");

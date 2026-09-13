@@ -41,6 +41,8 @@ public final class MelodicaService extends AccessibilityService {
     private WindowManager.LayoutParams panelParams;
     private TextView status;
     private Button play, collapse;
+    private android.widget.SeekBar progress;
+    private boolean seeking;
     private LinearLayout halfConfirmation;
     private boolean awaitingHalf;
     private final ToneState tones = new ToneState();
@@ -68,12 +70,12 @@ public final class MelodicaService extends AccessibilityService {
     };
     @Override protected void onServiceConnected() {
         instance = this; settings = new Settings(this); windows = (WindowManager) getSystemService(WINDOW_SERVICE);
-        try { Score stored = new Library(this).read(settings.selected()); load(stored.melody(stored.recommendedTrack())); }
+        try { Library library = new Library(this); Score stored = library.read(settings.selected()); load(settings.prepare(stored, library.kind(settings.selected()).equals("MIDI"))); }
         catch (Exception e) { load(Score.jianpu(Score.STAR, 100, "小星星")); }
         showPanel(); handler.post(heartbeat);
     }
     public void load(Score value) {
-        stop(); score = value; transport = new Transport(value.duration, settings.speed()); message = "已准备：" + value.title; render();
+        stop(); settings = new Settings(this); score = value; transport = new Transport(value.duration, settings.speed()); message = "已准备：" + value.title; render();
     }
     private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private Point size() { Point point = new Point(); windows.getDefaultDisplay().getRealSize(point); return point; }
@@ -106,6 +108,12 @@ public final class MelodicaService extends AccessibilityService {
         GradientDrawable bg = new GradientDrawable(); bg.setColor(Color.rgb(20, 39, 41)); bg.setCornerRadius(dp(16)); bg.setStroke(dp(1), Color.rgb(76, 129, 114)); panel.setBackground(bg);
         TextView title = new TextView(this); title.setText("口风琴  ·  拖动这里移动"); title.setTextSize(13); title.setTextColor(0xff66e3ac); title.setPadding(0, dp(3), 0, dp(5)); panel.addView(title);
         status = new TextView(this); status.setTextSize(11); status.setTextColor(Color.WHITE); status.setMaxLines(2); panel.addView(status);
+        progress = new android.widget.SeekBar(this); progress.setMax(1000); progress.setContentDescription("演奏进度，拖动后暂停并定位"); panel.addView(progress);
+        progress.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(android.widget.SeekBar view, int value, boolean user) { }
+            @Override public void onStartTrackingTouch(android.widget.SeekBar view) { seeking = true; pause("定位后请确认半音状态再继续"); }
+            @Override public void onStopTrackingTouch(android.widget.SeekBar view) { if (transport != null) seek(Math.round(view.getProgress() / 1000.0 * transport.duration)); seeking = false; render(); }
+        });
         LinearLayout row = new LinearLayout(this); panel.addView(row);
         play = button(row, "播放", this::toggle);
         button(row, "停止", this::stop);
@@ -143,7 +151,7 @@ public final class MelodicaService extends AccessibilityService {
     public void hidePanel() {
         dismissHalfConfirmation();
         closeCalibration();
-        if (panel != null) { windows.removeView(panel); panel = null; status = null; play = null; collapse = null; halfConfirmation = null; }
+        if (panel != null) { windows.removeView(panel); panel = null; status = null; play = null; collapse = null; halfConfirmation = null; progress = null; seeking = false; }
     }
     private boolean canCollapse() {
         // 实际手指触碰可能先取消演奏手势；该次触碰仍不能把刚暂停的悬浮窗收起。
@@ -156,6 +164,7 @@ public final class MelodicaService extends AccessibilityService {
         String detail = message;
         if (transport != null && score != null) {
             long now = SystemClock.uptimeMillis();
+            if (progress != null && !seeking) progress.setProgress((int) (transport.position(now) * 1000 / score.duration));
             if (transport.state == Transport.State.COUNTDOWN) detail = "准备 " + ((transport.countdown(now) + 999) / 1000) + " 秒";
             else if (transport.state == Transport.State.PLAYING) detail = "正在演奏";
             detail = score.title + "  " + time(transport.position(now)) + " / " + time(score.duration) + "\n" + detail;
@@ -218,6 +227,11 @@ public final class MelodicaService extends AccessibilityService {
         if (transport != null) transport.stop();
         message = "已停止，回到曲首"; handler.removeCallbacks(pumpTask);
         if (!inFlight) release(); render();
+    }
+    public void seek(long position) {
+        pause("已定位，请确认半音状态后继续");
+        if (transport != null) transport.seek(position);
+        render();
     }
     private void schedule(long delay) { handler.removeCallbacks(pumpTask); if (!destroyed) handler.postDelayed(pumpTask, delay); }
     private void pump() {
@@ -288,7 +302,7 @@ public final class MelodicaService extends AccessibilityService {
         }
         return path;
     }
-    private long releaseAt(Score.Note n) { return n.end - Math.min(25, Math.max(1, (n.end - n.start) / 10)); }
+    private long releaseAt(Score.Note n) { return ScoreTools.releaseAt(n); }
     private int findUpcomingNote(long position) {
         int low = 0, high = score.notes.size() - 1, found = -1;
         while (low <= high) { int mid = (low + high) >>> 1; if (score.notes.get(mid).start <= position) { found = mid; low = mid + 1; } else high = mid - 1; }

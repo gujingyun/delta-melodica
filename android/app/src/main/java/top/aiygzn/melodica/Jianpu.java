@@ -299,12 +299,26 @@ public final class Jianpu {
     }
     public static String transpose(String text, int semitones, boolean source, String mode) {
         if (source) {
-            source(text, "校验", mode); Matcher keys = KEY.matcher(text); StringBuffer output = new StringBuffer(); boolean found = false;
+            Result before = source(text, "校验", mode);
+            for (Score.Note n : before.score.notes) if ((long) n.pitch + semitones < 0 || (long) n.pitch + semitones > 127) throw new IllegalArgumentException("移调后超出 MIDI 音域");
+            // 全角标记先归一化，不改变歌词或其余原谱写法。
+            StringBuilder normalized = new StringBuilder(); List<Integer> positions = new ArrayList<>();
+            for (int i = 0; i < text.length(); i++) { String part = Normalizer.normalize(text.substring(i, i + 1), Normalizer.Form.NFKC); normalized.append(part); for (int j = 0; j < part.length(); j++) positions.add(i); }
+            Matcher normalizedKeys = KEY.matcher(normalized); StringBuilder canonical = new StringBuilder(text); List<int[]> replacements = new ArrayList<>(); List<String> headers = new ArrayList<>();
+            while (normalizedKeys.find()) { replacements.add(new int[]{positions.get(normalizedKeys.start()), positions.get(normalizedKeys.end() - 1) + 1}); headers.add(normalizedKeys.group()); }
+            for (int i = replacements.size() - 1; i >= 0; i--) canonical.replace(replacements.get(i)[0], replacements.get(i)[1], headers.get(i));
+            text = canonical.toString(); Matcher keys = KEY.matcher(text); StringBuffer output = new StringBuffer(); boolean found = false;
+            int firstKey = keys.find() ? keys.start() : Integer.MAX_VALUE; keys.reset();
+            boolean defaultStart = mode.equals("score") && !before.spans.isEmpty() && before.spans.get(0).left < firstKey;
             while (keys.find()) { found = true; int value = keyPitch(keys) + semitones; if (value < 12 || value > 127) throw new IllegalArgumentException("调号超出可编辑的音域");
                 String key = new String[]{"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}[value % 12] + (value / 12 - 1);
                 keys.appendReplacement(output, Matcher.quoteReplacement("/key(" + key + ")")); }
             keys.appendTail(output);
-            if (!found) return transpose("/key(C4)\n" + text, semitones, true, mode);
+            if (!found || defaultStart) {
+                int value = 60 + semitones;
+                String key = new String[]{"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}[Math.floorMod(value, 12)] + (Math.floorDiv(value, 12) - 1);
+                output.insert(0, "/key(" + key + ")\n");
+            }
             source(output.toString(), "校验", mode); return output.toString();
         }
         precise(text, 300, "校验"); Matcher tokens = Pattern.compile("//[^\\n]*|(?:\\+{0,5}|-{1,5})[#b]?[0-7](?::\\d+(?:/\\d+|\\.\\d+)?)?").matcher(text); StringBuffer output = new StringBuffer();

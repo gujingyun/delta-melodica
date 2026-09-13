@@ -7,17 +7,20 @@ android {
         applicationId 'top.aiygzn.melodica'
         minSdk 26
         targetSdk 34
-        versionCode 5
-        versionName '0.5.0-preview'
+        versionCode 6
+        versionName '0.6.0-preview'
         testInstrumentationRunner project.findProperty('testRunner') ?: 'top.aiygzn.melodica.GestureSmokeTest'
     }
     compileOptions {
+        coreLibraryDesugaringEnabled true
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
 }
 
 dependencies {
+    implementation 'org.jsoup:jsoup:1.23.2'
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.1.5'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'
 }

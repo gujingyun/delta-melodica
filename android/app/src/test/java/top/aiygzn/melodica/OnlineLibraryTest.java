@@ -14,6 +14,13 @@ import java.nio.file.Files;
 import java.util.List;
 
 public class OnlineLibraryTest {
+    @Test public void officialJsonScoresArePlayableAndValidated() throws Exception {
+        byte[] bytes = CloudScore.encode(Score.jianpu("1 2 3", 120, "JSON 曲谱")).toString().getBytes(StandardCharsets.UTF_8);
+        OnlineLibrary.Song song = catalog(item("json", "JSON 曲谱").put("format", "score").put("url", "songs/test.json").put("sha256", OnlineLibrary.digest(bytes))).get(0);
+        assertEquals(3, OnlineLibrary.decode(song, bytes).notes.size());
+        assertThrows(Exception.class, () -> OnlineLibrary.decode(song, "<html>验证</html>".getBytes(StandardCharsets.UTF_8)));
+        assertThrows(Exception.class, () -> catalog(item("bad", "格式无效").put("format", "image")));
+    }
     @Rule public TemporaryFolder temporary = new TemporaryFolder();
     private JSONObject item(String id, String title) throws Exception {
         return new JSONObject().put("id", id).put("title", title).put("url", "songs/test.mid");

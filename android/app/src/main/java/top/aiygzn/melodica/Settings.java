@@ -37,6 +37,19 @@ public final class Settings {
         prefs.edit().putString(songKey("segments"), data.toString()).apply();
     }
     public Score prepare(Score score, boolean fallback) { return ScoreTools.arrange(ScoreTools.melody(score, track(), piano(fallback)), segments()); }
+    static void inherit(Context context, String user, String id) {
+        SharedPreferences preferences = context.getSharedPreferences("melodica", Context.MODE_PRIVATE);
+        String source = "song:" + id + ":", target = "account:" + user + ":" + source;
+        SharedPreferences.Editor editor = preferences.edit();
+        for (java.util.Map.Entry<String, ?> entry : preferences.getAll().entrySet()) {
+            if (!entry.getKey().startsWith(source)) continue;
+            String key = target + entry.getKey().substring(source.length()); if (preferences.contains(key)) continue;
+            Object value = entry.getValue();
+            if (value instanceof String) editor.putString(key, (String) value); else if (value instanceof Float) editor.putFloat(key, (Float) value);
+            else if (value instanceof Integer) editor.putInt(key, (Integer) value); else if (value instanceof Boolean) editor.putBoolean(key, (Boolean) value);
+        }
+        editor.apply();
+    }
     public String target() { return prefs.getString("target", ""); }
     public String selected() { return prefs.getString(profile + "selected", "demo"); }
     public void selected(String value) { prefs.edit().putString(profile + "selected", value).apply(); }

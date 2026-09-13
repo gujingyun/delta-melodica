@@ -155,6 +155,7 @@ public final class Account {
             if (!name.matches("[a-f0-9-]+\\.json")) throw new IllegalArgumentException("游客曲目标识无效");
             File source = new File(context.getFilesDir(), "songs/" + name), target = new File(targetDir, name);
             if (source.isFile() && !target.exists()) writeJson(target, new JSONObject(new String(Files.readAllBytes(source.toPath()), StandardCharsets.UTF_8)));
+            Settings.inherit(context, userId(), name);
         }
         state.remove("pending"); writeJson(stateFile(), state); return files.length();
     }

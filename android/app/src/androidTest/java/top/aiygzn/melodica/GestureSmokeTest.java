@@ -120,8 +120,15 @@ public final class GestureSmokeTest extends Instrumentation {
             runOnMainSync(service::stop); await(() -> held() == 0, 600, "停止未释放触摸");
             check(transport().position(SystemClock.uptimeMillis()) == 0, "停止未归零"); pass("续播、停止归零与释放");
 
+            start("1:8 2"); await(() -> held() == 1, 4500, "定位测试长音未按下");
+            runOnMainSync(() -> service.seek(900)); await(() -> held() == 0, 600, "定位未释放旧触摸");
+            check(transport().state == Transport.State.PAUSED && transport().position(SystemClock.uptimeMillis()) == 900 && !((ToneState) field(service, "tones")).known(), "定位未暂停或保留了过期变音状态");
+            runOnMainSync(() -> { service.toggle(); check((Boolean) field(service, "awaitingHalf"), "定位后续播未重新确认半音"); service.confirmHalfState(false); });
+            await(() -> held() == 1, 1200, "定位后无法继续"); runOnMainSync(service::stop); await(() -> held() == 0, 600, "定位续播停止未释放");
+            int downAfterSeek = count("downs"); pass("定位暂停、释放旧触摸、确认半音后续播及停止");
+
             start("1:8"); runOnMainSync(service::stop); SystemClock.sleep(3200);
-            check(count("downs") == down + 1, "取消倒计时后仍发送了触摸"); pass("倒计时取消");
+            check(count("downs") == downAfterSeek, "取消倒计时后仍发送了触摸"); pass("倒计时取消");
 
             int noteStart = list("pitches").size(), selectorStart = list("selectors").size();
             start("-1 -#1 -#2 #1 #2 +#2 +#4 +2 1 1");

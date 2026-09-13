@@ -21,10 +21,14 @@ public final class OnlineLibrary {
     public static final String CATALOG_URL = "https://aiygzn.top/melodica/songs.json";
     static final int MAX_CATALOG_BYTES = 1024 * 1024, MAX_SONG_BYTES = 10 * 1024 * 1024;
     public static final class Song {
-        public final String id, title, artist, description, url, sha256;
+        public final String id, title, artist, description, url, sha256, format;
         public final long size;
         Song(String id, String title, String artist, String description, String url, long size, String sha256) {
+            this(id, title, artist, description, url, size, sha256, URI.create(url).getPath().toLowerCase(Locale.ROOT).endsWith(".json") ? "score" : "midi");
+        }
+        Song(String id, String title, String artist, String description, String url, long size, String sha256, String format) {
             this.id = id; this.title = title; this.artist = artist; this.description = description; this.url = url; this.size = size; this.sha256 = sha256;
+            this.format = format;
         }
     }
     private OnlineLibrary() { }
@@ -49,7 +53,10 @@ public final class OnlineLibrary {
             }
             String hash = text(item, "sha256", 64, false).toLowerCase(Locale.ROOT);
             if (!item.isNull("sha256") && !hash.matches("[a-f0-9]{64}")) throw new IOException("目录 SHA-256 无效");
-            result.add(new Song(id, title, artist, description, url, size, hash));
+            String format = item.optString("format", URI.create(url).getPath().toLowerCase(Locale.ROOT).endsWith(".json") ? "score" : "midi");
+            if (!format.equals("midi") && !format.equals("score")) throw new IOException("目录曲谱格式无效");
+            if (format.equals("score") && size > 2 * 1024 * 1024) throw new IOException("JSON 曲谱超过 2 MB");
+            result.add(new Song(id, title, artist, description, url, size, hash, format));
         }
         return result;
     }
@@ -68,10 +75,18 @@ public final class OnlineLibrary {
         return result;
     }
     public static Score download(Song song) throws Exception { return decode(song, fetch(song.url, MAX_SONG_BYTES)); }
+    public static String downloadTo(Song song, Library library) throws Exception {
+        byte[] bytes = fetch(song.url, MAX_SONG_BYTES); decode(song, bytes);
+        return library.importBytes(bytes, song.title, library.onlineId(song.id));
+    }
     static Score decode(Song song, byte[] bytes) throws Exception {
         checkCancelled();
         if (bytes.length > MAX_SONG_BYTES || (song.size >= 0 && bytes.length != song.size)) throw new IOException("MIDI 文件大小校验失败");
         if (!song.sha256.isEmpty() && !digest(bytes).equalsIgnoreCase(song.sha256)) throw new IOException("MIDI 文件 SHA-256 校验失败");
+        if (song.format.equals("score")) {
+            if (bytes.length > 2 * 1024 * 1024) throw new IOException("JSON 曲谱超过 2 MB");
+            return CloudScore.decode(new JSONObject(new String(bytes, StandardCharsets.UTF_8)));
+        }
         return MidiReader.read(bytes, song.title);
     }
     static String digest(byte[] bytes) throws Exception {
@@ -102,14 +117,14 @@ public final class OnlineLibrary {
         }
         checkCancelled(); return out.toByteArray();
     }
-    private static byte[] fetch(String address, int maximum) throws IOException {
+    static byte[] fetch(String address, int maximum) throws IOException {
         URI url = checkedUrl(address); long deadline = System.nanoTime() + 30_000_000_000L;
         for (int redirect = 0; redirect <= 3; redirect++) {
             checkCancelled();
             if (System.nanoTime() >= deadline) throw new IOException("网络请求超时，请重试");
             HttpURLConnection connection = (HttpURLConnection) url.toURL().openConnection();
             connection.setConnectTimeout(8000); connection.setReadTimeout(10000); connection.setInstanceFollowRedirects(false);
-            connection.setRequestProperty("User-Agent", "DeltaMelodicaAndroid/0.3"); connection.setRequestProperty("Accept-Encoding", "identity");
+            connection.setRequestProperty("User-Agent", "DeltaMelodicaAndroid/0.6"); connection.setRequestProperty("Accept-Encoding", "identity");
             try {
                 int code = connection.getResponseCode();
                 if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
@@ -119,7 +134,15 @@ public final class OnlineLibrary {
                     catch (IllegalArgumentException e) { throw new IOException("服务器重定向无效", e); }
                     continue;
                 }
-                if (code != 200) throw new IOException("服务器返回 HTTP " + code);
+                if (code != 200) {
+                    String detail = "";
+                    try (InputStream input = connection.getErrorStream()) {
+                        if (input != null) detail = new String(readLimited(input, 32768, deadline), StandardCharsets.UTF_8);
+                    } catch (IOException ignored) { /* 错误页过大时仍保留 HTTP 状态。 */ }
+                    if ("challenge".equalsIgnoreCase(connection.getHeaderField("cf-mitigated")) || ResourceSearch.verification(detail))
+                        throw new IOException("需要浏览器人机验证，请在源站下载后导入");
+                    throw new IOException(code == 403 ? "网站拒绝后台访问（403），请打开源站查看" : code == 429 ? "网站请求过于频繁（429），请稍后重试" : "服务器返回 HTTP " + code);
+                }
                 if (connection.getContentLengthLong() > maximum) throw new IOException("下载文件超出大小限制");
                 try (InputStream input = connection.getInputStream()) { return readLimited(input, maximum, deadline); }
             } finally { connection.disconnect(); }

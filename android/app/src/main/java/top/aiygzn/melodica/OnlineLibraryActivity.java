@@ -37,7 +37,7 @@ public final class OnlineLibraryActivity extends Activity {
         super.onCreate(state); library = new Library(this);
         LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setPadding(dp(20), dp(18), dp(20), dp(12)); setContentView(root);
         TextView title = label(root, "线上曲库", 26); title.setTextColor(0xff66e3ac);
-        label(root, "官网 MIDI · 下载到本地后可离线演奏", 13);
+        label(root, "官网 MIDI / 简谱 · 下载后可离线演奏", 13);
         search = new EditText(this); search.setSingleLine(true); search.setHint("搜索曲名或作者"); root.addView(search);
         status = label(root, "正在读取目录…", 13);
         list = new ListView(this); list.setDividerHeight(dp(1)); root.addView(list, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -113,7 +113,7 @@ public final class OnlineLibraryActivity extends Activity {
                     try { library.read(id); cached = true; }
                     catch (Exception ignored) { /* 缓存损坏时重新下载，验证成功后再替换。 */ }
                 }
-                if (!cached) id = library.saveOnline(song.id, OnlineLibrary.download(song));
+                if (!cached) id = OnlineLibrary.downloadTo(song, library);
                 OnlineLibrary.checkCancelled(); String selectedId = id;
                 runOnUiThread(() -> { if (current(token)) { setResult(RESULT_OK, new Intent().putExtra("songId", selectedId)); finish(); } });
             } catch (Exception error) { showFailure(token, "曲目下载失败，可重新点选重试", error); }
