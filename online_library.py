@@ -18,7 +18,7 @@ from cloud_score import MAX_SCORE_BYTES, to_song
 ONLINE_CATALOG_URL = "https://aiygzn.top/melodica/songs.json"
 MAX_CATALOG_BYTES = 1024 * 1024
 MAX_ONLINE_SONG_BYTES = 10 * 1024 * 1024
-USER_AGENT = "DeltaMelodica/0.13"
+USER_AGENT = "DeltaMelodica/0.14"
 
 
 @dataclass(frozen=True)

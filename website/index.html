@@ -6,7 +6,7 @@
   <meta name="description" content="三角洲口风琴：Windows MIDI／简谱自动演奏工具，支持悬浮窗、片段播放、调速与移调。">
   <meta name="theme-color" content="#101413">
   <title>三角洲口风琴 · Windows 自动演奏工具</title>
-  <link rel="stylesheet" href="styles.css?v=20260913-ui-refresh">
+  <link rel="stylesheet" href="styles.css?v=0.14">
   <script defer src="video-player.js?v=20260913-hls"></script>
 </head>
 <body>
@@ -32,7 +32,7 @@
     <main id="top">
       <section class="hero container">
         <div class="hero-copy">
-          <p class="eyebrow hero-badge"><span class="eyebrow-dot"></span> 为游戏里的音乐时刻而作 <span class="badge-version">v0.13</span></p>
+          <p class="eyebrow hero-badge"><span class="eyebrow-dot"></span> 为游戏里的音乐时刻而作 <span class="badge-version">v0.14</span></p>
           <h1>战场之外，<br><em>让旋律成为你的语言。</em></h1>
           <p class="hero-lede">把喜欢的 MIDI 与简谱，变成游戏里的八键演奏。<br>选一首歌，调整好节奏，下一段旋律由你开始。</p>
           <div class="hero-actions">
@@ -49,9 +49,9 @@
         </div>
 
         <div class="hero-visual">
-          <div class="preview-heading"><span><span class="eyebrow-dot"></span> 你的演奏工作台</span><span>界面设计预览 · 待发布</span></div>
+          <div class="preview-heading"><span><span class="eyebrow-dot"></span> 你的演奏工作台</span><span>Windows v0.14</span></div>
           <div class="screen-frame">
-            <img src="assets/main-window-refresh.png" width="1182" height="872" fetchpriority="high" alt="新版客户端设计预览：左侧曲库，右侧曲目设置、旋律预览、八键映射与播放控制。此界面尚未发布。">
+            <img src="assets/main-window-v0.14.png" width="1180" height="840" fetchpriority="high" alt="v0.14 客户端：左侧曲库、新建简谱与聚合搜索，右侧曲目设置、旋律预览和播放控制。">
           </div>
           <div class="preview-caption"><span>MIDI / 简谱导入</span><span>实时旋律预览</span><span>游戏内快捷控制</span></div>
         </div>
@@ -86,7 +86,7 @@
             </button>
           </div>
           <figcaption id="demo-caption">
-            <span>支持全屏与进度拖动。视频录制于 v0.12，界面与设计预览有所不同。</span>
+            <span>支持全屏与进度拖动。视频录制于 v0.12，界面与当前版本有所不同。</span>
             <a href="videos/feature-intro-20260912.mp4" target="_blank" rel="noopener">MP4 兼容播放 <span aria-hidden="true">↗</span></a>
           </figcaption>
           <p id="video-status" class="video-status" role="status">点击播放后才加载视频，不自动播放。</p>
@@ -121,6 +121,24 @@
             <p>支持暂停续播、拖动进度和多段片段；改速后仍按原曲时间记忆片段范围。</p>
             <div class="progress-demo" aria-hidden="true"><span></span></div>
           </article>
+          <article class="feature-card">
+            <div class="card-icon">♫</div>
+            <p class="card-index">04 / 简谱工作台</p>
+            <h3>边改谱文<br>边看谱面</h3>
+            <p>统一新建与编辑入口，支持谱面预览、符号工具、移调和选段试听；原谱试听时高亮跟随，可另存修改版。</p>
+          </article>
+          <article class="feature-card">
+            <div class="card-icon">⌕</div>
+            <p class="card-index">05 / 聚合搜谱</p>
+            <h3>五个来源<br>一起找旋律</h3>
+            <p>搜索简谱空间、官网、BitMidi、MidiWorld 与 MidiShow。支持简谱、MIDI 和曲谱 JSON，按来源条件下载导入。</p>
+          </article>
+          <article class="feature-card">
+            <div class="card-icon">☁</div>
+            <p class="card-index">06 / 账号曲库</p>
+            <h3>登录账号<br>同步曲目</h3>
+            <p>支持邮箱注册、找回密码与主动曲库同步。换设备后可下载可演奏音符，游客也能继续使用本地功能。</p>
+          </article>
         </div>
       </section>
 
@@ -129,11 +147,11 @@
           <div class="section-heading">
             <p class="eyebrow">03 / QUICK START</p>
             <h2>三步，<br><em>从曲谱到游戏。</em></h2>
-            <p>程序无需联网运行；也可以打开线上曲库下载 MIDI 到本地。第一次使用时，建议先用内置的音阶校准确认游戏音键。</p>
+            <p>本地曲目可离线演奏，也可联网搜索曲谱或同步账号曲库。第一次使用时，建议先用内置的音阶校准确认游戏音键。</p>
           </div>
           <ol class="steps">
-            <li><span class="step-number">01</span><div><h3>获取曲谱</h3><p>从线上曲库下载 MIDI，或导入本地 MIDI、输入以空格分隔的简谱。程序会复制曲库文件，不会改动原文件。</p></div></li>
-            <li><span class="step-number">02</span><div><h3>试听与调整</h3><p>选择演奏音轨，按需要调整速度、移调和片段，再用本机试听确认旋律。</p></div></li>
+            <li><span class="step-number">01</span><div><h3>获取曲谱</h3><p>点击「搜简谱 / MIDI」，导入本地 MIDI 或曲谱 JSON，也可在「新建简谱」工作台写下自己的旋律。</p></div></li>
+            <li><span class="step-number">02</span><div><h3>试听与调整</h3><p>在「编辑选中乐曲」中修改曲谱，或调整音轨、速度、移调和片段，再用本机试听确认旋律。</p></div></li>
             <li><span class="step-number">03</span><div><h3>切回游戏</h3><p>按 F8 开始、F8 暂停／继续，F9 停止归零；F10／F11 调速，F4／F5 移调。</p></div></li>
           </ol>
         </div>
@@ -210,8 +228,8 @@
         <div class="download-card">
           <div class="download-main">
             <p class="eyebrow">LATEST RELEASE</p>
-            <h2>三角洲口风琴 <span>v0.13</span></h2>
-            <p>最新版内置夜莺、守望、风起、破晓四首解锁乐曲，并修复简谱输入窗口的保存按钮显示问题。支持线上曲库搜索、分页下载、片段播放及游戏悬浮窗。</p>
+            <h2>三角洲口风琴 <span>v0.14</span></h2>
+            <p>全新界面、简谱编辑工作台与试听跟随，支持五个来源聚合搜谱、邮箱账号和曲库云同步。新增曲谱 JSON 导入下载，增强反复、延音、连奏、变速与转调解析。</p>
             <a class="button button-primary" href="api/download" download><span aria-hidden="true">↓</span> 下载 Windows 版</a>
           </div>
           <div class="download-details">
@@ -221,7 +239,7 @@
             <div><span>注意事项</span><strong>启动时需要管理员权限</strong></div>
           </div>
         </div>
-        <p class="download-note">首次启动会出现 Windows 权限确认。若旧版正在运行，请先从系统托盘退出，再打开新版。</p>
+        <p class="download-note">首次启动会出现 Windows 权限确认。若旧版正在运行，请先从系统托盘退出，再打开新版。原本地曲库与设置继续沿用。<a href="updates-v0.14.html">查看 v0.14 更新说明 ↗</a></p>
       </section>
     </main>
 

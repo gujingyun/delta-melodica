@@ -16,7 +16,7 @@ HOST = "127.0.0.1"
 PORT = 3002
 DATA_DIR = Path(os.environ.get("MELODICA_STATS_DIR", "/var/lib/delta-melodica-stats"))
 DATA_FILE = DATA_DIR / "stats.json"
-DOWNLOAD_LOCATION = "/melodica/downloads/delta-melodica-v0.13.exe"
+DOWNLOAD_LOCATION = "/melodica/downloads/delta-melodica-v0.14.exe"
 
 
 def now_text() -> str:

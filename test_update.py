@@ -10,7 +10,7 @@ class UpdateTests(unittest.TestCase):
     def test_version_parser_accepts_optional_prefix_and_compares_numeric_parts(self):
         self.assertEqual(parse_version("v0.10"), (0, 10))
         self.assertEqual(parse_version("1.2.3"), (1, 2, 3))
-        self.assertGreater(parse_version("0.14"), parse_version(APP_VERSION))
+        self.assertGreater(parse_version("0.14"), parse_version("0.13"))
         self.assertLess(parse_version("0.10"), parse_version(APP_VERSION))
 
     def test_manifest_requires_valid_version_and_normalizes_notes(self):
