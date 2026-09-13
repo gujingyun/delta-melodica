@@ -1,23 +1,26 @@
-"""聚合公开 MIDI 搜索，按来源解析结果并验证下载后的演奏曲谱。"""
+"""聚合公开简谱与 MIDI 搜索，按来源解析并验证可演奏曲谱。"""
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from html.parser import HTMLParser
 import hashlib
+import json
 from pathlib import Path
 import re
 import tempfile
 import threading
+import unicodedata
 import urllib.parse
 import urllib.request
 
-from music import Mapping, compile_plan, read_midi
+from cloud_score import from_song
+from music import Mapping, compile_plan, parse_jianpu_space, read_midi, song_to_jianpu
 from online_library import (ONLINE_CATALOG_URL, USER_AGENT, OnlineSong, _safe_title,
                             download_online_song, fetch_catalog)
 
 
-SOURCES = {"official": "官网曲库", "bitmidi": "BitMidi", "midiworld": "MidiWorld", "midishow": "MidiShow"}
+SOURCES = {"jianpu": "简谱空间", "official": "官网曲库", "bitmidi": "BitMidi", "midiworld": "MidiWorld", "midishow": "MidiShow"}
 MAX_PAGE_BYTES = 2 * 1024 * 1024
 
 
@@ -54,6 +57,8 @@ def search_url(source: str, query: str, page: int = 1) -> str:
     if source not in SOURCES or not 1 <= page <= 1000:
         raise ValueError("资源来源或页码不正确")
     query = urllib.parse.urlencode({"q": query})
+    if source == "jianpu":
+        return "https://jianpu.space/songList"
     if source == "official":
         return ONLINE_CATALOG_URL
     if source == "bitmidi":
@@ -117,6 +122,79 @@ class _Links(HTMLParser):
             self.link = None
 
 
+class _JianpuCatalog(HTMLParser):
+    """读取公开曲目表的曲名和歌手，不把编辑、历史等导航当成曲目。"""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.rows, self.cells, self.cell, self.href = [], [], None, ""
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "tr":
+            self.cells, self.href = [], ""
+        elif tag == "td":
+            self.cell = []
+        elif tag == "a" and self.cell is not None and not self.cells:
+            self.href = dict(attrs).get("href", "")
+
+    def handle_data(self, data):
+        if self.cell is not None:
+            self.cell.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "td" and self.cell is not None:
+            self.cells.append(" ".join("".join(self.cell).split()))
+            self.cell = None
+        elif tag == "tr" and len(self.cells) >= 2 and self.href:
+            self.rows.append((self.href, self.cells[0], self.cells[1]))
+
+
+class _JianpuText(HTMLParser):
+    """只提取页面明确标记的谱文，不执行网页脚本。"""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.depth, self.parts, self.found = 0, [], False
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "div":
+            if self.depth:
+                self.depth += 1
+            elif dict(attrs).get("id") == "jianpuOut":
+                self.depth, self.found = 1, True
+        if self.depth and tag == "br":
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag == "div" and self.depth:
+            self.depth -= 1
+
+    def handle_data(self, data):
+        if self.depth:
+            self.parts.append(data)
+
+
+def search_jianpu(html: str, query: str) -> SearchPage:
+    from win_input import simplified_chinese
+    parser = _JianpuCatalog()
+    parser.feed(html)
+    terms = simplified_chinese(unicodedata.normalize("NFKC", query)).casefold().split()
+    songs, seen, valid_rows = [], set(), 0
+    for href, title, artist in parser.rows:
+        url = _site_url("https://jianpu.space/songList", href)
+        if not title or not re.fullmatch(r"/songList/(?:\d+|[a-f0-9]{24})", urllib.parse.urlsplit(url).path):
+            continue
+        valid_rows += 1
+        artist = "" if artist == "None" else artist
+        haystack = simplified_chinese(unicodedata.normalize("NFKC", f"{title} {artist}")).casefold()
+        if url not in seen and all(term in haystack for term in terms):
+            songs.append(SearchSong("jianpu", title[:100], url, artist=artist[:180]))
+            seen.add(url)
+    if not valid_rows:
+        raise ValueError("简谱空间未返回可识别的曲目目录，可能需要验证或页面结构已变化。")
+    return SearchPage(songs)
+
+
 def parse_search_page(source: str, html: str, url: str, page: int = 1) -> SearchPage:
     parser = _Links()
     parser.feed(html)
@@ -168,6 +246,8 @@ def search_source(source: str, query: str, page: int = 1) -> SearchPage:
     if not query or len(query) > 100:
         raise ValueError("请填写 1～100 个字符的曲名或作者")
     url = search_url(source, query, page)
+    if source == "jianpu":
+        return search_jianpu(_fetch_html(url), query) if page == 1 else SearchPage([])
     if source == "official":
         if page > 1:
             return SearchPage([])
@@ -183,7 +263,7 @@ def search_source(source: str, query: str, page: int = 1) -> SearchPage:
 
 def search_all(query: str, pages: dict[str, int], cancel: threading.Event, results):
     """每个来源完成即投递结果，慢站点和失败站点不阻塞其他结果展示。"""
-    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="midi-search") as pool:
+    with ThreadPoolExecutor(max_workers=5, thread_name_prefix="score-search") as pool:
         futures = {pool.submit(search_source, source, query, page): source for source, page in pages.items()}
         for future in as_completed(futures):
             if cancel.is_set():
@@ -215,6 +295,8 @@ def download_resource(song: SearchSong, library_dir: Path, mapping: Mapping,
     """先验证下载与八键转换，成功后才把完整 MIDI 放入曲库。"""
     if cancel.is_set():
         raise SearchCancelled()
+    if song.source == "jianpu":
+        return _download_jianpu(song, Path(library_dir), mapping, cancel)
     url = resolve_download(song)
     library_dir = Path(library_dir)
     library_dir.mkdir(parents=True, exist_ok=True)
@@ -236,3 +318,37 @@ def download_resource(song: SearchSong, library_dir: Path, mapping: Mapping,
         destination = library_dir / f"search-{digest}__{_safe_title(song.title)}.mid"
         downloaded.replace(destination)
         return destination
+
+
+def _download_jianpu(song: SearchSong, library_dir: Path, mapping: Mapping,
+                     cancel: threading.Event) -> Path:
+    parser = _JianpuText()
+    parser.feed(_fetch_html(song.page_url))
+    if cancel.is_set():
+        raise SearchCancelled()
+    if not parser.found or parser.depth:
+        raise ValueError("未找到完整简谱文字；此页面可能需要验证或不支持直接导入。")
+    source_text = "".join(parser.parts)
+    parsed, warnings = parse_jianpu_space(source_text, song.title)
+    if not compile_plan(parsed, mapping, track="auto", style="original").notes:
+        raise ValueError("此简谱没有可演奏的音符。")
+    data = from_song(parsed)
+    # 精确拍数保存源谱变速，编辑器直接复用既有格式；原谱文字另存供核对。
+    data["editor"] = {"score": song_to_jianpu(parsed), "bpm": 120, "style": "original"}
+    data["jianpu_source"] = {"url": song.page_url, "text": source_text, "warnings": warnings}
+    body = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    if len(body) > MAX_PAGE_BYTES:
+        raise ValueError("转换后的简谱超过 2 MB。")
+    digest = hashlib.sha256(body).hexdigest()[:24]
+    if cancel.is_set():
+        raise SearchCancelled()
+    library_dir.mkdir(parents=True, exist_ok=True)
+    destination = library_dir / f"search-{digest}__{_safe_title(song.title)}.json"
+    with tempfile.TemporaryDirectory(prefix=".resource-", dir=library_dir) as staging:
+        downloaded = Path(staging) / "score.json"
+        downloaded.write_bytes(body)
+        if cancel.is_set():
+            raise SearchCancelled()
+        if not destination.exists() or destination.read_bytes() != body:
+            downloaded.replace(destination)
+    return destination
