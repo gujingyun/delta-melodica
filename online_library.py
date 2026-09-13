@@ -1,4 +1,4 @@
-"""线上曲库目录读取和 MIDI 下载。"""
+"""线上曲库目录读取，以及 MIDI／可编辑曲谱 JSON 下载。"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -12,6 +12,7 @@ import urllib.request
 import uuid
 
 from music import read_midi
+from cloud_score import MAX_SCORE_BYTES, to_song
 
 
 ONLINE_CATALOG_URL = "https://aiygzn.top/melodica/songs.json"
@@ -31,6 +32,12 @@ class OnlineSong:
     description: str = ""
     size: int | None = None
     sha256: str | None = None
+    format: str = ""
+
+    @property
+    def is_score(self):
+        return self.format == "score" or (not self.format and
+            urllib.parse.urlsplit(self.url).path.lower().endswith(".json"))
 
 
 def _text(value, field: str, maximum: int, required: bool = False) -> str:
@@ -82,7 +89,12 @@ def parse_catalog(payload, base_url: str) -> list[OnlineSong]:
             sha256 = _text(sha256, "sha256", 64).lower()
             if not re.fullmatch(r"[0-9a-f]{64}", sha256):
                 raise ValueError(f"线上曲库第 {index} 项的 SHA-256 不正确")
-        songs.append(OnlineSong(song_id, title, url, artist, description, size, sha256))
+        score_format = item.get("format", "score" if parsed_url.path.lower().endswith(".json") else "midi")
+        if score_format not in ("midi", "score"):
+            raise ValueError(f"线上曲库第 {index} 项的曲谱格式不受支持")
+        if score_format == "score" and size is not None and size > MAX_SCORE_BYTES:
+            raise ValueError("线上曲谱 JSON 不能超过 2 MB")
+        songs.append(OnlineSong(song_id, title, url, artist, description, size, sha256, score_format))
     return songs
 
 
@@ -103,11 +115,13 @@ def _safe_title(title: str) -> str:
 
 
 def download_online_song(song: OnlineSong, library_dir: str | Path) -> Path:
-    """下载、校验并把线上 MIDI 原子写入本地曲库。"""
+    """校验下载内容后原子加入曲库；JSON 保留原谱及编辑信息。"""
     library_dir = Path(library_dir)
     library_dir.mkdir(parents=True, exist_ok=True)
     temporary_path = None
-    destination = library_dir / f"{uuid.uuid4().hex[:8]}__{_safe_title(song.title)}.mid"
+    suffix = ".json" if song.is_score else ".mid"
+    maximum = MAX_SCORE_BYTES if song.is_score else MAX_ONLINE_SONG_BYTES
+    destination = library_dir / f"{uuid.uuid4().hex[:8]}__{_safe_title(song.title)}{suffix}"
     try:
         with tempfile.NamedTemporaryFile(prefix=".online-", suffix=".tmp", dir=library_dir,
                                           delete=False) as temporary:
@@ -118,25 +132,52 @@ def download_online_song(song: OnlineSong, library_dir: str | Path) -> Path:
             with urllib.request.urlopen(request, timeout=15) as response:
                 headers = getattr(response, "headers", {})
                 content_length = headers.get("Content-Length")
-                if content_length and int(content_length) > MAX_ONLINE_SONG_BYTES:
-                    raise ValueError("线上 MIDI 文件超过 10 MB")
+                if content_length and int(content_length) > maximum:
+                    raise ValueError("线上文件超过大小限制（曲谱 2 MB，MIDI 10 MB）")
                 while True:
                     chunk = response.read(64 * 1024)
                     if not chunk:
                         break
                     total += len(chunk)
-                    if total > MAX_ONLINE_SONG_BYTES:
-                        raise ValueError("线上 MIDI 文件超过 10 MB")
+                    if total > maximum:
+                        raise ValueError("线上文件超过大小限制（曲谱 2 MB，MIDI 10 MB）")
                     temporary.write(chunk)
                     digest.update(chunk)
         if song.size is not None and total != song.size:
-            raise ValueError("线上 MIDI 文件大小校验失败")
+            raise ValueError("线上曲目文件大小校验失败")
         if song.sha256 and digest.hexdigest() != song.sha256:
-            raise ValueError("线上 MIDI 文件 SHA-256 校验失败")
-        read_midi(temporary_path)
+            raise ValueError("线上曲目文件 SHA-256 校验失败")
+        if song.is_score:
+            validate_score_file(temporary_path)
+        else:
+            read_midi(temporary_path)
         temporary_path.replace(destination)
         return destination
     except Exception:
         if temporary_path:
             temporary_path.unlink(missing_ok=True)
         raise
+
+
+def validate_score_file(path):
+    """核对交换音符与可编辑原谱一致，拒绝损坏的编辑附注。"""
+    from cloud_score import from_song
+    from music import parse_jianpu, parse_jianpu_space
+    if Path(path).stat().st_size > MAX_SCORE_BYTES:
+        raise ValueError("曲谱 JSON 不能超过 2 MB")
+    data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    song = to_song(data)
+    editor = data.get("editor")
+    if editor is not None:
+        if not isinstance(editor, dict) or editor.get("style", "original") not in ("original", "piano"):
+            raise ValueError("曲谱编辑信息格式不正确")
+        try:
+            if editor.get("format") == "jianpu_space":
+                parsed = parse_jianpu_space(editor["score"], song.title, mode=editor.get("mode", "score"))[0]
+            else:
+                parsed = parse_jianpu(editor["score"], float(editor["bpm"]), song.title, precise=True)
+            if from_song(parsed) != from_song(song):
+                raise ValueError("曲谱的原谱文字与音符不一致")
+        except (KeyError, TypeError, AttributeError) as error:
+            raise ValueError("曲谱编辑信息缺少有效的谱文或速度") from error
+    return song
