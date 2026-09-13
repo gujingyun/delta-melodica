@@ -118,7 +118,7 @@ class OnlineLibraryTests(unittest.TestCase):
             self.assertEqual(fetch_catalog("https://example.test/songs.json"), [])
         request = urlopen.call_args.args[0]
         self.assertEqual(request.full_url, "https://example.test/songs.json")
-        self.assertEqual(request.get_header("User-agent"), "DeltaMelodica/0.13")
+        self.assertEqual(request.get_header("User-agent"), "DeltaMelodica/0.14")
         self.assertEqual(urlopen.call_args.kwargs["timeout"], 8)
 
     def test_download_validates_hash_and_writes_readable_midi(self):
