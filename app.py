@@ -295,7 +295,7 @@ class App:
         self.library.pack(side="left", fill="both", expand=True)
         self.library.bind("<<ListboxSelect>>", self.select_song)
         self.locked_widgets.append(self.library)
-        for text, command in (("＋  导入 MIDI", self.import_midi), ("＋  输入简谱", self.score_dialog)):
+        for text, command in (("＋  导入曲谱 / MIDI", self.import_midi), ("＋  输入简谱", self.score_dialog)):
             button = ttk.Button(sidebar, text=text, command=command, style="Accent.TButton" if command == self.import_midi else "TButton")
             button.pack(fill="x", padx=18, pady=(0, 8))
             self.locked_widgets.append(button)
@@ -308,7 +308,7 @@ class App:
         self.delete_button = ttk.Button(sidebar, text="删除选中曲目", style="Quiet.TButton", command=self.delete_song)
         self.delete_button.pack(fill="x", padx=18, pady=(0, 8))
         self.locked_widgets.append(self.delete_button)
-        tk.Label(sidebar, text="支持 .mid / .midi\n多音轨可单独选择旋律", justify="left", bg=CARD, fg=MUTED, font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=18, pady=(0, 20))
+        tk.Label(sidebar, text="支持 .json / .mid / .midi\n曲谱可编辑，多音轨可选旋律", justify="left", bg=CARD, fg=MUTED, font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=18, pady=(0, 20))
 
         content = tk.Frame(body, bg=BG)
         content.pack(side="left", fill="both", expand=True)
@@ -489,7 +489,7 @@ class App:
         dialog = self._dialog("线上曲库", "760x620")
         dialog.minsize(700, 540)
         self.online_catalog_dialog = dialog
-        tk.Label(dialog, text="从官网曲库下载 MIDI", bg=CARD, fg=TEXT,
+        tk.Label(dialog, text="从官网曲库下载曲谱", bg=CARD, fg=TEXT,
                  font=("Microsoft YaHei UI", 15, "bold")).pack(anchor="w", padx=22, pady=(20, 4))
         tk.Label(dialog, text="选择曲目后下载到本地曲库；网络不可用时不影响已有曲目播放。",
                  bg=CARD, fg=MUTED).pack(anchor="w", padx=22, pady=(0, 14))
@@ -1152,12 +1152,17 @@ class App:
     def import_midi(self):
         if self.busy:
             return
-        paths = filedialog.askopenfilenames(title="选择 MIDI 音乐", filetypes=[("MIDI 音乐", "*.mid *.midi")], parent=self.root)
+        paths = filedialog.askopenfilenames(title="选择曲谱或 MIDI", filetypes=[("曲谱与 MIDI", "*.json *.mid *.midi"),
+                                           ("曲谱 JSON", "*.json"), ("MIDI 音乐", "*.mid *.midi")], parent=self.root)
         last, errors = None, []
         for filename in paths:
             try:
                 path = Path(filename)
-                read_midi(path)
+                if path.suffix.lower() == ".json":
+                    from online_library import validate_score_file
+                    validate_score_file(path)
+                else:
+                    read_midi(path)
                 destination = self.library_dir / (uuid.uuid4().hex[:8] + "__" + path.name)
                 shutil.copy2(path, destination)
                 last = destination
@@ -1166,7 +1171,7 @@ class App:
         if last:
             self._load_library(last)
         if errors:
-            messagebox.showerror("部分 MIDI 未导入", "\n".join(errors), parent=self.root)
+            messagebox.showerror("部分曲目未导入", "\n".join(errors), parent=self.root)
 
     def _dialog(self, title, geometry):
         dialog = tk.Toplevel(self.root)
@@ -1729,8 +1734,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", default=str(Path(os.environ.get("LOCALAPPDATA", str(Path.cwd()))) / "DeltaMelodica"))
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument("--smoke-online", metavar="曲名", help="冒烟测试时从官网实际下载指定曲目")
     parser.add_argument("--game-test", action="store_true", help="10 秒后向目标游戏播放小星星开头七音，仅执行一次")
     args = parser.parse_args()
+    if args.smoke_online and not args.smoke:
+        parser.error("--smoke-online 需要同时使用 --smoke")
     # EXE 使用 requireAdministrator 清单；源码运行也请求提权，冒烟测试除外。
     if not args.smoke and process_elevated() is False:
         try:
@@ -1766,7 +1774,42 @@ def main():
                 assert root.state() == "withdrawn" and not app.closing
                 app.show_main()
                 assert root.state() == "normal"
-                midi_tested, jianpu_tested, source_to_edit = 0, 0, None
+                online_downloaded = ""
+                if args.smoke_online:
+                    import time
+                    from PIL import ImageGrab
+
+                    def wait_online():
+                        deadline = time.monotonic() + 30
+                        while app.online_operation and time.monotonic() < deadline:
+                            root.update()
+                            time.sleep(0.01)
+                        assert not app.online_operation, "官网请求超时"
+
+                    def capture(widget, filename):
+                        widget.geometry("+30+30")
+                        widget.lift()
+                        widget.update()
+                        time.sleep(0.2)
+                        widget.update()
+                        x, y = widget.winfo_rootx(), widget.winfo_rooty()
+                        ImageGrab.grab(bbox=(x, y, x + widget.winfo_width(),
+                                             y + widget.winfo_height())).save(Path(args.data_dir, filename))
+
+                    app.online_library_dialog()
+                    wait_online()
+                    app.online_search.set(args.smoke_online)
+                    app.apply_online_search()
+                    assert len(app.online_visible_songs) == 1, "官网未找到唯一的目标曲目"
+                    online_song = app.online_visible_songs[0]
+                    app.download_online_selected()
+                    wait_online()
+                    assert online_song.song_id in app.online_downloaded_ids, app.online_catalog_status.get()
+                    assert app.song.title == online_song.title, "官网下载结果没有载入曲库"
+                    online_downloaded = app.current_source[1].name
+                    capture(app.online_catalog_dialog, "online-download.png")
+                    app._close_online_library_dialog()
+                midi_tested, jianpu_tested, score_json_tested, source_to_edit = 0, 0, 0, None
                 for _, source in app.entries:
                     if source[0] == "file" and source[1].suffix.lower() in (".mid", ".midi"):
                         imported = read_midi(source[1])
@@ -1784,6 +1827,13 @@ def main():
                             edited = parse_jianpu(data["editor"]["score"], data["editor"]["bpm"], data["title"], precise=True)
                             assert from_song(edited) == from_song(to_song(data)), "编辑文字丢失音符、时值或连奏"
                             jianpu_tested += 1
+                            source_to_edit = source[1]
+                        elif data.get("editor", {}).get("format") == "jianpu_space":
+                            from cloud_score import from_song
+                            from online_library import validate_score_file
+                            parsed = validate_score_file(source[1])
+                            assert compile_plan(parsed, app.mapping(), style="original").notes
+                            score_json_tested += 1
                             source_to_edit = source[1]
                 if source_to_edit:
                     app._load_library(source_to_edit)
@@ -1815,6 +1865,8 @@ def main():
                 if source_to_edit:
                     assert preview.playing_index is not None, "窗口还原丢失播放标记"
                     preview.mark_playing(None)
+                if args.smoke_online:
+                    capture(editor.dialog, "online-score-editor.png")
                 editor.close(force=True)
                 app.online_button.invoke()
                 search = app.resource_search
@@ -1825,7 +1877,7 @@ def main():
                 assert search.rule_mode.get() == "按谱面规则", "简谱未默认使用谱面规则"
                 assert search.rule_combo.winfo_ismapped(), "简谱规则选择不可见"
                 search.close()
-                Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": True, "notes": len(app.plan.notes), "midi_tested": midi_tested, "jianpu_tested": jianpu_tested, "width": root.winfo_width(), "height": root.winfo_height(), "tray": True, "hide_restore": True, "editor": True, "aggregate_search": True, "jianpu_search": True}), encoding="utf-8")
+                Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": True, "notes": len(app.plan.notes), "midi_tested": midi_tested, "jianpu_tested": jianpu_tested, "score_json_tested": score_json_tested, "online_downloaded": online_downloaded, "width": root.winfo_width(), "height": root.winfo_height(), "tray": True, "hide_restore": True, "editor": True, "aggregate_search": True, "jianpu_search": True}), encoding="utf-8")
             except Exception as error:
                 smoke_exit = 1
                 Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": False, "error": str(error)}), encoding="utf-8")

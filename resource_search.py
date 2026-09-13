@@ -18,7 +18,7 @@ import urllib.request
 from cloud_score import from_song
 from music import Mapping, compile_plan, parse_jianpu_space, read_midi, song_to_jianpu
 from online_library import (ONLINE_CATALOG_URL, USER_AGENT, OnlineSong, _safe_title,
-                            download_online_song, fetch_catalog)
+                            download_online_song, fetch_catalog, validate_score_file)
 
 
 SOURCES = {"jianpu": "简谱空间", "official": "官网曲库", "bitmidi": "BitMidi", "midiworld": "MidiWorld", "midishow": "MidiShow"}
@@ -34,6 +34,7 @@ class SearchSong:
     artist: str = ""
     size: int | None = None
     sha256: str | None = None
+    format: str = ""
 
     @property
     def key(self):
@@ -294,7 +295,7 @@ def search_source(source: str, query: str, page: int = 1) -> SearchPage:
         terms = query.casefold().split()
         return SearchPage([
             SearchSong(source, song.title, "https://aiygzn.top/melodica/", song.url,
-                       song.artist, song.size, song.sha256)
+                       song.artist, song.size, song.sha256, song.format)
             for song in songs if all(term in f"{song.title} {song.artist} {song.description}".casefold()
                                      for term in terms)])
     return parse_search_page(source, _fetch_html(url), url, page)
@@ -342,19 +343,20 @@ def download_resource(song: SearchSong, library_dir: Path, mapping: Mapping,
     # 中间文件放入独立子目录，取消或转换失败时不会留下半首曲目。
     with tempfile.TemporaryDirectory(prefix=".resource-", dir=library_dir) as staging:
         downloaded = download_online_song(OnlineSong("resource", song.title, url,
-                                                    size=song.size, sha256=song.sha256), staging)
+                                                    size=song.size, sha256=song.sha256, format=song.format), staging)
         if cancel.is_set():
             raise SearchCancelled()
-        parsed = read_midi(downloaded)
-        if not compile_plan(parsed, mapping, track="auto", style="piano").notes:
-            raise ValueError("此 MIDI 没有可转换的旋律音符")
+        is_score = downloaded.suffix == ".json"
+        parsed = validate_score_file(downloaded) if is_score else read_midi(downloaded)
+        if not compile_plan(parsed, mapping, track="auto", style="original" if is_score else "piano").notes:
+            raise ValueError("此曲目没有可演奏的旋律音符")
         digest = hashlib.sha256(downloaded.read_bytes()).hexdigest()[:24]
         if cancel.is_set():
             raise SearchCancelled()
-        existing = next(library_dir.glob(f"search-{digest}__*.mid"), None)
+        existing = next(library_dir.glob(f"search-{digest}__*{downloaded.suffix}"), None)
         if existing and hashlib.sha256(existing.read_bytes()).hexdigest()[:24] == digest:
             return existing
-        destination = library_dir / f"search-{digest}__{_safe_title(song.title)}.mid"
+        destination = library_dir / f"search-{digest}__{_safe_title(song.title)}{downloaded.suffix}"
         downloaded.replace(destination)
         return destination
 

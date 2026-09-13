@@ -153,6 +153,8 @@ class ResourceSearchDialog:
                 condition = ("按谱面展开反复、一二房子，处理同音延音、连奏和段落调号。" if self.rule_mode.get() == "按谱面规则"
                              else "跟随源站：忽略反复和圆弧／~ 连线；最后一个调号用于全曲。")
                 condition += "未标速度按 120 BPM，未标调号按 1=C4；导入后可试听、编辑。"
+            elif song.format == "score" or song.download_url.lower().split("?", 1)[0].endswith(".json"):
+                condition = "保留原谱，下载后可直接试听、编辑和演奏。"
             self.detail.set(f"{song.title} · {SOURCES[song.source]}\n{condition}")
         self._buttons()
 
@@ -289,7 +291,7 @@ class ResourceSearchDialog:
                         continue
                     self.status.set(f"已下载并转换“{song.title}”，已选入本地曲库；关闭此窗口后可按 F8 游戏演奏。")
                     self.app.detail.set(f"已从 {SOURCES[song.source]} 下载并转换“{song.title}”。")
-                    if song.source == "jianpu":
+                    if song.source == "jianpu" or path.suffix.lower() == ".json":
                         self.status.set(f"已导入简谱“{song.title}”。关闭此窗口后可试听、编辑或按 F8 演奏。")
                         self.detail.set(self.app.subtitle.get())
                     if preview:
