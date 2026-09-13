@@ -1,13 +1,16 @@
 """统一乐曲编辑窗口；试听使用独立播放器，保存为兼容云同步的曲谱副本。"""
 import json
 import queue
+import re
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 import uuid
 
 from account_client import atomic_json
 from cloud_score import from_song, to_song
-from music import DEMO_SCORES, compile_plan, parse_jianpu, song_to_jianpu, transpose_jianpu
+from music import (DEMO_SCORES, compile_plan, parse_jianpu, parse_jianpu_space, select_jianpu_space,
+                   song_to_jianpu, transpose_jianpu)
+from jianpu_editor import ScorePreview, replace_header, score_glyphs, score_metadata, transpose_source
 from player import Player
 from win_input import PreviewOutput
 
@@ -22,9 +25,11 @@ class ScoreEditor:
         self.closed = False
         self.validation_timer = None
         self.saved_path = None
+        self.notation, self.source_mode, self.source_url = "simple", "score", ""
         text, bpm = self.source_text()
-        self.dialog = app._dialog("编辑乐曲 · 简谱工作台", "920x710")
-        self.dialog.minsize(820, 650)
+        self.is_source = self.notation == "jianpu_space"
+        self.dialog = app._dialog("编辑乐曲 · 简谱工作台", "1180x800" if self.is_source else "920x710")
+        self.dialog.minsize(960 if self.is_source else 820, 720 if self.is_source else 650)
         self.dialog.protocol("WM_DELETE_WINDOW", self.close)
         title = app.song.title if app.song.title.endswith(" · 修改版") else app.song.title[:94] + " · 修改版"
         self.name = tk.StringVar(self.dialog, value=title)
@@ -50,23 +55,30 @@ class ScoreEditor:
         self.save_button.pack(side="right")
 
         header = tk.Frame(self.dialog, bg=CARD)
-        header.pack(fill="x", padx=24, pady=(20, 12))
-        tk.Label(header, text="SCORE EDITOR  /  乐曲编辑", fg=ACCENT, bg=CARD,
-                 font=("Microsoft YaHei UI", 9, "bold")).pack(anchor="w")
-        tk.Label(header, text="让每个音符，按你的想法演奏", fg=TEXT, bg=CARD,
-                 font=("Microsoft YaHei UI", 19, "bold")).pack(anchor="w", pady=(5, 7))
+        header.pack(fill="x", padx=24, pady=(14 if self.is_source else 20, 12))
         track = app.track_combo.get()
-        tk.Label(header, text=f"来源：{app.song.title[:35]}  ·  {track[:35]}", fg=MUTED, bg=CARD,
-                 anchor="w").pack(fill="x")
+        if self.is_source:
+            tk.Label(header, text="编辑原谱，边改边看", fg=TEXT, bg=CARD,
+                     font=("Microsoft YaHei UI", 17, "bold")).pack(side="left")
+            tk.Label(header, text=f"{app.song.title[:35]}  ·  {track[:35]}", fg=MUTED, bg=CARD).pack(side="right")
+        else:
+            tk.Label(header, text="SCORE EDITOR  /  乐曲编辑", fg=ACCENT, bg=CARD,
+                     font=("Microsoft YaHei UI", 9, "bold")).pack(anchor="w")
+            tk.Label(header, text="让每个音符，按你的想法演奏", fg=TEXT, bg=CARD,
+                     font=("Microsoft YaHei UI", 19, "bold")).pack(anchor="w", pady=(5, 7))
+            tk.Label(header, text=f"来源：{app.song.title[:35]}  ·  {track[:35]}", fg=MUTED, bg=CARD,
+                     anchor="w").pack(fill="x")
         fields = tk.Frame(self.dialog, bg=CARD)
         fields.pack(fill="x", padx=24, pady=(0, 12))
         fields.columnconfigure(0, weight=1)
         for column, (label, variable, width) in enumerate((
-                ("保存曲名", self.name, 28), ("BPM · 整体速度", self.bpm, 9), ("演奏方式", self.style, 19))):
+                ("保存曲名", self.name, 28), ("BPM · 跟随谱文" if self.is_source else "BPM · 整体速度", self.bpm, 12), ("演奏方式", self.style, 19))):
             box = tk.Frame(fields, bg=CARD)
             box.grid(row=0, column=column, sticky="ew", padx=(0, 14 if column < 2 else 0))
             tk.Label(box, text=label, fg=MUTED, bg=CARD, font=("Microsoft YaHei UI", 9)).pack(anchor="w", pady=(0, 5))
             widget = ttk.Combobox(box, textvariable=variable, values=list(PLAY_STYLES), state="readonly", width=width) if column == 2 else ttk.Entry(box, textvariable=variable, width=width)
+            if column == 1 and self.is_source:
+                widget.configure(state="readonly")
             widget.pack(fill="x")
 
         toolbar = tk.Frame(self.dialog, bg=CARD)
@@ -81,16 +93,45 @@ class ScoreEditor:
 
         help_box = tk.Frame(self.dialog, bg=BG, highlightbackground=LINE, highlightthickness=1)
         help_box.pack(fill="x", padx=24, pady=(0, 10))
-        tk.Label(help_box, text="1～7 音阶   +1 高八度   -1 低八度   #4 升半音   b3 降半音   0 休止\n"
-                 "1:2 两拍；1:1/2 半拍；(1 2 3) 连奏。空格分隔，试听时选中完整音符及括号。",
+        help_text = ("原谱写法：1' 高八度  1, 低八度  1_ 半拍  1= 四分之一拍  1- 两拍  | 小节  L: 歌词\n"
+                     "调号和 BPM 写在谱文中；点击右侧音符定位文字，选段试听保留调号、变速和转调。" if self.is_source else
+                     "1～7 音阶   +1 高八度   -1 低八度   #4 升半音   b3 降半音   0 休止\n"
+                     "1:2 两拍；1:1/2 半拍；(1 2 3) 连奏。空格分隔，试听时选中完整音符及括号。")
+        tk.Label(help_box, text=help_text, wraplength=850 if self.is_source else 0,
                  fg=MUTED, bg=BG, justify="left", font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=12, pady=10)
-        tk.Label(self.dialog, text="MIDI 按所选音轨转为完整原速旋律；精确拍数保留节奏，修改 BPM 可整体调速。",
-                 fg=MUTED, bg=CARD, font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=24, pady=(0, 8))
-        editor_box = tk.Frame(self.dialog, bg=DEEP, highlightbackground=LINE, highlightthickness=1)
-        editor_box.pack(fill="both", expand=True, padx=24)
+        if self.is_source:
+            symbols = tk.Frame(self.dialog, bg=CARD)
+            symbols.pack(fill="x", padx=24, pady=(0, 10))
+            self.symbol_buttons = {}
+            ttk.Style(self.dialog).configure("ScoreSymbol.TButton", font=("Microsoft YaHei UI", 9), padding=(5, 4))
+            for label, symbol in (("升音 #", "#"), ("高音 '", "'"), ("低音 ,", ","), ("半拍 _", "_"),
+                                  ("¼ 拍 =", "="), ("延长 -", "-"), ("附点 .", "."), ("小节 |", "|")):
+                button = ttk.Button(symbols, text=label, width=6, style="ScoreSymbol.TButton",
+                                    command=lambda s=symbol: self.insert_symbol(s))
+                button.pack(side="left", padx=(0, 4))
+                self.symbol_buttons[symbol] = button
+            ttk.Button(symbols, text="调号", width=5, style="ScoreSymbol.TButton", command=lambda: self.edit_header("key")).pack(side="right")
+            ttk.Button(symbols, text="速度", width=5, style="ScoreSymbol.TButton", command=lambda: self.edit_header("tempo")).pack(side="right", padx=4)
+            split = tk.PanedWindow(self.dialog, orient="horizontal", bg=LINE, sashwidth=7, bd=0)
+            split.pack(fill="both", expand=True, padx=24)
+            left, right = tk.Frame(split, bg=CARD), tk.Frame(split, bg=CARD)
+            split.add(left, minsize=300, width=500, stretch="always")
+            split.add(right, minsize=300, stretch="always")
+            tk.Label(left, text="谱文 · 保留原谱调号、速度与歌词", bg=CARD, fg=MUTED, anchor="w").pack(fill="x", pady=(0, 7))
+            mode = "按谱面规则" if self.source_mode == "score" else "跟随源站播放"
+            tk.Label(right, text=f"谱面预览 · 点击音符定位 · {mode}", bg=CARD, fg=MUTED, anchor="w").pack(fill="x", pady=(0, 7))
+            self.score_preview = ScorePreview(right, self.select_range)
+            self.score_preview.pack(fill="both", expand=True)
+            editor_box = tk.Frame(left, bg=DEEP, highlightbackground=LINE, highlightthickness=1)
+            editor_box.pack(fill="both", expand=True)
+        else:
+            tk.Label(self.dialog, text="MIDI 按所选音轨转为完整原速旋律；精确拍数保留节奏，修改 BPM 可整体调速。",
+                     fg=MUTED, bg=CARD, font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=24, pady=(0, 8))
+            editor_box = tk.Frame(self.dialog, bg=DEEP, highlightbackground=LINE, highlightthickness=1)
+            editor_box.pack(fill="both", expand=True, padx=24)
         self.text = tk.Text(editor_box, bg=DEEP, fg=TEXT, insertbackground=ACCENT, selectbackground="#35472b",
                             selectforeground=ACCENT, wrap="word", bd=0, padx=16, pady=14,
-                            font=("Consolas", 15), spacing1=5, spacing3=5, undo=True, autoseparators=True,
+                            font=("Consolas", 13 if self.is_source else 15), spacing1=5, spacing3=5, undo=True, autoseparators=True,
                             maxundo=100, exportselection=False)
         scroll = ttk.Scrollbar(editor_box, command=self.text.yview)
         scroll.pack(side="right", fill="y")
@@ -102,7 +143,7 @@ class ScoreEditor:
         self.initial = self.snapshot()
         self.text.bind("<<Modified>>", self.changed)
         self.text.bind("<Control-a>", self.select_all)
-        for variable in (self.name, self.bpm, self.style):
+        for variable in ((self.name, self.style) if self.is_source else (self.name, self.bpm, self.style)):
             variable.trace_add("write", self.changed)
         self.dialog.bind("<Control-s>", lambda event: self.save())
         self.dialog.bind("<Escape>", lambda event: self.close())
@@ -119,6 +160,20 @@ class ScoreEditor:
             if data.get("version") != 1:
                 return data["score"], data["bpm"]
             saved = data.get("editor")
+            original = data.get("jianpu_source")
+            candidates = []
+            if isinstance(saved, dict) and saved.get("format") == "jianpu_space":
+                candidates.append((saved.get("score"), saved.get("mode", "score"), saved.get("source_url", "")))
+            if isinstance(original, dict):
+                candidates.append((original.get("text"), original.get("mode", "source"), original.get("url", "")))
+            for raw, mode, url in candidates:
+                try:
+                    parsed, _ = parse_jianpu_space(raw, data["title"], mode=mode)
+                    if from_song(parsed) == from_song(to_song(data)):
+                        self.notation, self.source_mode, self.source_url = "jianpu_space", mode, url
+                        return raw, f"{score_metadata(raw)[1]:g}"
+                except (KeyError, ValueError, TypeError):
+                    pass
             if isinstance(saved, dict):
                 try:
                     parsed = parse_jianpu(saved["score"], float(saved["bpm"]), data["title"], precise=True)
@@ -142,6 +197,12 @@ class ScoreEditor:
         title = self.name.get().strip()
         if not title or len(title) > 100 or any(ord(c) < 32 for c in title):
             raise ValueError("曲名需为 1～100 个字符。")
+        if self.is_source:
+            if selection:
+                start = len(self.text.get("1.0", "sel.first"))
+                end = len(self.text.get("1.0", "sel.last"))
+                return select_jianpu_space(self.text.get("1.0", "end-1c"), title, start, end, mode=self.source_mode)
+            return parse_jianpu_space(score, title, mode=self.source_mode)[0]
         try:
             bpm = float(self.bpm.get())
         except ValueError:
@@ -151,6 +212,81 @@ class ScoreEditor:
     def select_all(self, event=None):
         self.text.tag_add("sel", "1.0", "end-1c")
         return "break"
+
+    def text_index(self, offset):
+        return f"1.0+{offset}c"
+
+    def select_range(self, start, end):
+        self.text.tag_remove("sel", "1.0", "end")
+        self.text.tag_add("sel", self.text_index(start), self.text_index(end))
+        self.text.mark_set("insert", self.text_index(end))
+        self.text.see(self.text_index(start))
+        self.text.focus_set()
+
+    def replace_range(self, start, end, replacement):
+        left, right = self.text_index(start), self.text_index(end)
+        self.text.edit_separator()
+        self.text.configure(autoseparators=False)
+        self.text.delete(left, right)
+        self.text.insert(left, replacement)
+        self.text.edit_separator()
+        self.text.configure(autoseparators=True)
+        self.text.tag_remove("sel", "1.0", "end")
+        self.text.focus_set()
+
+    def insert_symbol(self, symbol):
+        text = self.text.get("1.0", "end-1c")
+        selection = self.text.tag_ranges("sel")
+        start = len(self.text.get("1.0", "sel.first" if selection else "insert"))
+        end = len(self.text.get("1.0", "sel.last" if selection else "insert"))
+        glyph = next((g for g in score_glyphs(text) if g.kind == "note" and
+                      ((g.start == start and g.end == end) if selection else (g.start < start <= g.end))), None)
+        if glyph and symbol != "|":
+            accidental, degree, octave, length, dots = glyph.parts
+            accidental = accidental or ""
+            if degree in ("0", "-") and symbol in ("#", "'", ","):
+                self.status.set("休止符和延音线不需要八度或升降号。")
+                return
+            if symbol == "#":
+                accidental = accidental[1:] if accidental.startswith("b") else (accidental.replace("n", "") + "#")[:2]
+            elif symbol in ("'", ","):
+                octave = octave[:-1] if octave and not octave.startswith(symbol) else octave + symbol
+            elif symbol in ("_", "="):
+                length = symbol
+            elif symbol == "-":
+                length = length + "-" if length.startswith("-") else "-"
+            elif symbol == ".":
+                dots = (dots + ".")[:2]
+            replacement = accidental + degree + octave + length + dots
+            self.replace_range(glyph.start, glyph.end, replacement)
+        else:
+            # 小节线添加到所选音符后；不会用一个符号覆盖整段旋律。
+            self.replace_range(end, end, symbol)
+
+    def edit_header(self, kind):
+        text = self.text.get("1.0", "end-1c")
+        key, bpm = score_metadata(text)
+        if kind == "key":
+            value = simpledialog.askstring("起始调号", "填写调号，例如 C4、A3、F#4；其余段落调号保留。",
+                                           initialvalue=key, parent=self.dialog)
+            if value is None:
+                return
+            value = value.strip()
+            if not re.fullmatch(r"[A-Ga-g][#b]?[0-9]?", value):
+                messagebox.showerror("调号无效", "请填写 C4、A3、F#4 等调号。", parent=self.dialog)
+                return
+        else:
+            value = simpledialog.askfloat("起始速度", "填写 20～500 BPM；其余段落的 bpm 标记保留。",
+                                         initialvalue=bpm, minvalue=20, maxvalue=500, parent=self.dialog)
+            if value is None:
+                return
+        result = replace_header(text, kind, value)
+        try:
+            parse_jianpu_space(result, self.name.get(), mode=self.source_mode)
+        except ValueError as error:
+            messagebox.showerror("无法应用", str(error), parent=self.dialog)
+            return
+        self.replace_range(0, len(text), result)
 
     def history(self, action):
         try:
@@ -171,20 +307,46 @@ class ScoreEditor:
         self.validation_timer = self.dialog.after(350, self.validate)
 
     def validate(self):
+        if self.validation_timer:
+            self.dialog.after_cancel(self.validation_timer)
         self.validation_timer = None
         try:
             song = self.parsed()
+            if self.is_source:
+                text = self.text.get("1.0", "end-1c")
+                self.bpm.set(f"{score_metadata(text)[1]:g}")
+                self.score_preview.show(text)
+                self.text.tag_remove("error", "1.0", "end")
+                self.text.tag_configure("lyric", foreground="#a6afa0")
+                self.text.tag_configure("directive", foreground="#c6ef86")
+                for tag in ("lyric", "directive"):
+                    self.text.tag_remove(tag, "1.0", "end")
+                for number, line in enumerate(text.splitlines(), 1):
+                    if line.lstrip().startswith("L:"):
+                        self.text.tag_add("lyric", f"{number}.0", f"{number}.end")
+                for glyph in self.score_preview.glyphs:
+                    if glyph.kind in ("key", "tempo"):
+                        self.text.tag_add("directive", self.text_index(glyph.start), self.text_index(glyph.end))
             self.summary.set(f"{len(song.notes)} 音  ·  {song.duration:.2f} 秒")
             self.status.set("修改尚未保存 · 可试听全曲或选中片段。" if self.snapshot() != self.initial else
                             "修改后可先试听，再另存到曲库。原曲会保留。")
         except ValueError as error:
             self.summary.set("请检查简谱")
             self.status.set(str(error))
+            if self.is_source:
+                self.score_preview.show("", str(error))
+                self.text.tag_configure("error", background="#633c26")
+                self.text.tag_remove("error", "1.0", "end")
+                line = re.search(r"第 (\d+) 行", str(error))
+                if line:
+                    self.text.tag_add("error", f"{line[1]}.0", f"{line[1]}.end")
 
     def transpose(self):
         try:
             self.parsed()
-            result = transpose_jianpu(self.text.get("1.0", "end-1c"), int(self.shift.get()))
+            text = self.text.get("1.0", "end-1c")
+            result = (transpose_source(text, int(self.shift.get()), self.source_mode) if self.is_source
+                      else transpose_jianpu(text, int(self.shift.get())))
             if result == self.text.get("1.0", "end-1c"):
                 return
             self.text.edit_separator()
@@ -236,6 +398,9 @@ class ScoreEditor:
             # 本地保留原编辑文字；云同步只传已有的标准音符格式。
             data["editor"] = {"score": self.text.get("1.0", "end-1c"), "bpm": float(self.bpm.get()),
                               "style": self.styles[self.style.get()]}
+            if self.is_source:
+                data["editor"].update(format="jianpu_space", mode=self.source_mode, source_url=self.source_url,
+                                      bpm=score_metadata(data["editor"]["score"])[1])
             safe = "".join(c for c in song.title if c not in '<>:"/\\|?*').rstrip(" .")[:70] or "我的旋律"
             path = self.app.library_dir / f"{uuid.uuid4().hex}__{safe}.json"
             atomic_json(path, data)

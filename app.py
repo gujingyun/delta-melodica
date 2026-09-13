@@ -1766,7 +1766,7 @@ def main():
                 assert root.state() == "withdrawn" and not app.closing
                 app.show_main()
                 assert root.state() == "normal"
-                midi_tested, jianpu_tested = 0, 0
+                midi_tested, jianpu_tested, source_to_edit = 0, 0, None
                 for _, source in app.entries:
                     if source[0] == "file" and source[1].suffix.lower() in (".mid", ".midi"):
                         imported = read_midi(source[1])
@@ -1784,9 +1784,18 @@ def main():
                             edited = parse_jianpu(data["editor"]["score"], data["editor"]["bpm"], data["title"], precise=True)
                             assert from_song(edited) == from_song(to_song(data)), "编辑文字丢失音符、时值或连奏"
                             jianpu_tested += 1
+                            source_to_edit = source[1]
+                if source_to_edit:
+                    app._load_library(source_to_edit)
                 app.edit_song()
                 editor = app.score_editor
                 assert editor and editor.parsed().notes, "乐曲编辑器未能打开曲谱"
+                if source_to_edit:
+                    assert editor.is_source, "在线简谱没有恢复可读原谱"
+                    expected = from_song(app.song)
+                    expected["title"] = editor.name.get()
+                    assert from_song(editor.parsed()) == expected, "原谱编辑改变了原有演奏音符"
+                    assert editor.score_preview.glyphs, "谱面预览为空"
                 root.update()
                 assert editor.save_button.winfo_ismapped(), "编辑器保存按钮不可见"
                 editor.close(force=True)
