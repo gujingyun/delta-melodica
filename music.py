@@ -261,56 +261,6 @@ def read_midi(path: str | Path) -> Song:
     return Song(path.stem, sorted(notes, key=lambda n: (n.start, n.pitch)), {k: v for k, v in tracks.items() if k in used}, duration)
 
 
-def transcribed_melody(events, duration: float, title: str, *, trim_leading=False) -> Song:
-    """按识别强度选主旋律，保留重复音和休止，过滤弱泛音与短碎音。"""
-    if not isinstance(duration, (int, float)) or not math.isfinite(duration) or not 0 < duration <= 600:
-        raise ValueError("扒谱片段时长不正确。")
-    if not isinstance(events, list) or not 1 <= len(events) <= 60000:
-        raise ValueError("扒谱音符数量不正确。")
-    source, timeline = [], defaultdict(list)
-    for event in events:
-        if (not isinstance(event, list) or len(event) != 4
-                or any(type(value) not in (int, float) or not math.isfinite(value) for value in event)):
-            raise ValueError("扒谱音符格式不正确。")
-        start, end, pitch, strength = event
-        if not 0 <= start < end <= duration + 0.1 or type(pitch) is not int or not 0 <= pitch <= 127 or not 0 <= strength <= 1:
-            raise ValueError("扒谱音符超出有效范围。")
-        end = min(end, duration)
-        if strength < 0.2 or end - start < 0.08:
-            continue
-        index = len(source)
-        source.append((Note(start, end, pitch), strength))
-        timeline[start].append((True, index))
-        timeline[end].append((False, index))
-    active, notes = set(), []
-    previous, winner, last_id = None, None, None
-    for timestamp in sorted(timeline):
-        if winner is not None and previous is not None and timestamp > previous:
-            note = source[winner][0]
-            if notes and last_id == winner and abs(notes[-1].end - previous) < 1e-8:
-                notes[-1] = Note(notes[-1].start, timestamp, note.pitch)
-            else:
-                notes.append(Note(previous, timestamp, note.pitch))
-            last_id = winner
-        for on, index in timeline[timestamp]:
-            if on:
-                active.add(index)
-            else:
-                active.discard(index)
-        # 稍微偏向正在持续的音，避免识别强度接近时在和声间来回跳动。
-        winner = max(active, key=lambda index: (source[index][1] + (0.06 if index == winner else 0),
-                                                source[index][0].start, -index)) if active else None
-        previous = timestamp
-    notes = [note for note in notes if note.end - note.start >= 0.065]
-    if not notes:
-        raise ValueError("没有足够清晰的旋律音符，请更换片段或尝试独奏模式。")
-    if trim_leading:
-        offset = notes[0].start
-        notes = [Note(note.start - offset, note.end - offset, note.pitch) for note in notes]
-        duration -= offset
-    return Song(title, notes, {0: "AI 主旋律"}, duration)
-
-
 def monophonic(notes: list[Note]) -> list[Note]:
     # 每个时间段取仍在发声的最高音，避免不同八度修饰键互相冲突。
     import heapq

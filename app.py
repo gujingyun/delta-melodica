@@ -159,7 +159,6 @@ class App:
         self.update_checking = False
         self.online_catalog = []
         self.resource_search = None
-        self.audio_dialog = None
         self.online_catalog_dialog = None
         self.online_catalog_list = None
         self.online_catalog_status = None
@@ -303,9 +302,6 @@ class App:
         self.online_button = ttk.Button(sidebar, text="线上曲库 / 聚合搜索", command=self.resource_search_dialog)
         self.online_button.pack(fill="x", padx=18, pady=(0, 8))
         self.locked_widgets.append(self.online_button)
-        self.audio_button = ttk.Button(sidebar, text="MP3 自动扒谱", command=self.audio_transcription_dialog)
-        self.audio_button.pack(fill="x", padx=18, pady=(0, 8))
-        self.locked_widgets.append(self.audio_button)
         self.edit_button = ttk.Button(sidebar, text="编辑选中乐曲", command=self.edit_song)
         self.edit_button.pack(fill="x", padx=18, pady=(0, 8))
         self.locked_widgets.append(self.edit_button)
@@ -557,20 +553,6 @@ class App:
         self.resource_search = ResourceSearchDialog(self, query)
         return self.resource_search
 
-    def audio_transcription_dialog(self):
-        if self.busy:
-            return
-        if self.audio_dialog and not self.audio_dialog.closed:
-            self.audio_dialog.dialog.lift()
-            return self.audio_dialog
-        from audio_transcription_ui import AudioTranscriptionDialog
-        self.audio_dialog = AudioTranscriptionDialog(self)
-        return self.audio_dialog
-
-    def close_audio_dialog(self):
-        if self.audio_dialog:
-            self.audio_dialog.close()
-
     def _close_online_library_dialog(self):
         if self.resource_search:
             self.resource_search.close()
@@ -716,7 +698,7 @@ class App:
             else:
                 try:
                     data = json.loads(source[1].read_text(encoding="utf-8"))
-                    label = "简谱" if data.get("version") != 1 or isinstance(data.get("editor"), dict) else "扒谱" if data.get("transcription") else "云端"
+                    label = "简谱" if data.get("version") != 1 or isinstance(data.get("editor"), dict) else "云端"
                 except (ValueError, OSError, AttributeError):
                     label = "曲谱"
             self.library.insert("end", f"[{label}] {name}")
@@ -746,8 +728,6 @@ class App:
                     if isinstance(data.get("editor"), dict):
                         editor_style = data["editor"].get("style")
                         hint = "可编辑简谱 · 精确时值 · 本地修改版"
-                    elif data.get("transcription"):
-                        hint = "AI 音频扒谱 · 可试听并编辑修正"
                     else:
                         hint = "云端曲谱 · 可离线演奏"
                 else:
@@ -1725,7 +1705,6 @@ class App:
         if self.closing:
             return
         self.closing = True
-        self.close_audio_dialog()
         if self.score_editor:
             self.score_editor.close(force=True)
         self._close_online_library_dialog()
@@ -1801,13 +1780,7 @@ def main():
                 root.update()
                 assert search.search_button.winfo_ismapped(), "聚合搜索按钮不可见"
                 search.close()
-                app.audio_button.invoke()
-                audio = app.audio_dialog
-                assert audio and not audio.closed, "音频扒谱入口未能打开"
-                root.update()
-                assert audio.run_button.winfo_ismapped(), "开始扒谱按钮不可见"
-                audio.close()
-                Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": True, "notes": len(app.plan.notes), "midi_tested": midi_tested, "width": root.winfo_width(), "height": root.winfo_height(), "tray": True, "hide_restore": True, "editor": True, "aggregate_search": True, "audio_transcription": True}), encoding="utf-8")
+                Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": True, "notes": len(app.plan.notes), "midi_tested": midi_tested, "width": root.winfo_width(), "height": root.winfo_height(), "tray": True, "hide_restore": True, "editor": True, "aggregate_search": True}), encoding="utf-8")
             except Exception as error:
                 smoke_exit = 1
                 Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": False, "error": str(error)}), encoding="utf-8")

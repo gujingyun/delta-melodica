@@ -16,20 +16,6 @@ advapi32 = ct.WinDLL("advapi32", use_last_error=True)
 shell32 = ct.WinDLL("shell32", use_last_error=True)
 
 
-def terminate_process_tree(process):
-    """终止指定后台引擎及虚拟环境启动器的子进程，避免取消后继续占用文件。"""
-    if process.poll() is not None:
-        return
-    try:
-        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                       creationflags=subprocess.CREATE_NO_WINDOW, timeout=8)
-    finally:
-        if process.poll() is None:
-            process.kill()
-        process.wait(timeout=5)
-
-
 class MOUSEINPUT(ct.Structure):
     _fields_ = [("dx", wt.LONG), ("dy", wt.LONG), ("mouseData", wt.DWORD),
                 ("dwFlags", wt.DWORD), ("time", wt.DWORD), ("dwExtraInfo", ct.c_size_t)]
