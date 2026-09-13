@@ -299,7 +299,7 @@ class App:
             button = ttk.Button(sidebar, text=text, command=command, style="Accent.TButton" if command == self.import_midi else "TButton")
             button.pack(fill="x", padx=18, pady=(0, 8))
             self.locked_widgets.append(button)
-        self.online_button = ttk.Button(sidebar, text="线上曲库 / 聚合搜索", command=self.online_library_dialog)
+        self.online_button = ttk.Button(sidebar, text="线上曲库 / 聚合搜索", command=self.resource_search_dialog)
         self.online_button.pack(fill="x", padx=18, pady=(0, 8))
         self.locked_widgets.append(self.online_button)
         self.edit_button = ttk.Button(sidebar, text="编辑选中乐曲", command=self.edit_song)
@@ -1774,7 +1774,13 @@ def main():
                 root.update()
                 assert editor.save_button.winfo_ismapped(), "编辑器保存按钮不可见"
                 editor.close(force=True)
-                Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": True, "notes": len(app.plan.notes), "midi_tested": midi_tested, "width": root.winfo_width(), "height": root.winfo_height(), "tray": True, "hide_restore": True, "editor": True}), encoding="utf-8")
+                app.online_button.invoke()
+                search = app.resource_search
+                assert search and not search.closed, "聚合搜索入口未能打开"
+                root.update()
+                assert search.search_button.winfo_ismapped(), "聚合搜索按钮不可见"
+                search.close()
+                Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": True, "notes": len(app.plan.notes), "midi_tested": midi_tested, "width": root.winfo_width(), "height": root.winfo_height(), "tray": True, "hide_restore": True, "editor": True, "aggregate_search": True}), encoding="utf-8")
             except Exception as error:
                 smoke_exit = 1
                 Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": False, "error": str(error)}), encoding="utf-8")
