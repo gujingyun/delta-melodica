@@ -43,5 +43,8 @@ public final class Transport {
         if (clockLimit != Long.MAX_VALUE) { position = position(now); origin = now; clockLimit = Long.MAX_VALUE; }
     }
     public void stop() { position = 0; state = State.READY; clockLimit = Long.MAX_VALUE; generation++; }
+    public void seek(long value) {
+        position = Math.max(0, Math.min(duration, value)); state = State.PAUSED; clockLimit = Long.MAX_VALUE; generation++;
+    }
     public boolean active() { return state == State.PLAYING || state == State.COUNTDOWN; }
 }
