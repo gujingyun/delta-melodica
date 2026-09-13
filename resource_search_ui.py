@@ -31,14 +31,14 @@ class ResourceSearchDialog:
         self.source_status = {}
         self.downloading = False
         self.active_query = ""
-        self.dialog = app._dialog("聚合搜索音乐", "960x680")
+        self.dialog = app._dialog("搜简谱 / MIDI", "960x680")
         self.dialog.minsize(860, 630)
         self.dialog.protocol("WM_DELETE_WINDOW", self.close)
         self.query = tk.StringVar(value=query)
-        self.status = tk.StringVar(value="输入曲名或作者，搜索多个 MIDI 资源网站。英文站点建议使用英文曲名。")
-        self.detail = tk.StringVar(value="下载后自动选择旋律音轨并转换为八键演奏；完整 MIDI 保留在本地曲库。")
+        self.status = tk.StringVar(value="输入曲名或歌手，默认搜索简谱；也可勾选 MIDI 来源。支持繁简体曲名匹配。")
+        self.detail = tk.StringVar(value="简谱按音符和时值导入，先试听、再按 F8 演奏；未标速度或调号时会提示默认值。")
         self.source_summary = tk.StringVar(value="")
-        self.enabled = {source: tk.BooleanVar(value=True) for source in SOURCES}
+        self.enabled = {source: tk.BooleanVar(value=source == "jianpu") for source in SOURCES}
         self._build()
         self.timer = app.root.after(40, self._poll)
         self.entry.focus_set()
@@ -53,7 +53,7 @@ class ResourceSearchDialog:
         tk.Label(heading, text="搜一首，加入你的曲库", bg=CARD, fg=TEXT,
                  font=("Microsoft YaHei UI", 16, "bold")).pack(side="left")
         ttk.Button(heading, text="浏览官网精选", command=self.browse_official, style="Quiet.TButton").pack(side="right")
-        tk.Label(dialog, text="聚合 MIDI 乐谱资源 · 自动转换旋律 · 下载后离线播放", bg=CARD,
+        tk.Label(dialog, text="搜曲名 → 导入简谱 → 试听 / 编辑 → F8 演奏 · 保存后可离线使用", bg=CARD,
                  fg=MUTED).pack(anchor="w", padx=22, pady=(0, 14))
         search = tk.Frame(dialog, bg=CARD)
         search.pack(fill="x", padx=22)
@@ -120,6 +120,9 @@ class ResourceSearchDialog:
 
     def _buttons(self):
         song = self.selected()
+        is_jianpu = song and song.source == "jianpu"
+        self.download_button.configure(text="导入简谱" if is_jianpu else "下载并转换")
+        self.preview_button.configure(text="导入后试听" if is_jianpu else "下载后试听")
         can_download = song and song.downloadable and not self.downloading
         for button in (self.download_button, self.preview_button):
             button.configure(state="normal" if can_download else "disabled")
@@ -131,6 +134,8 @@ class ResourceSearchDialog:
         song = self.selected()
         if song:
             condition = "可直接下载，自动转换后加入曲库。" if song.downloadable else "需到 MidiShow 登录并按积分规则下载，再点击“导入已下载 MIDI”。"
+            if song.source == "jianpu":
+                condition = "直接读取文字简谱，保留节奏、休止与重复音。未标速度按 120 BPM、未标调号按 1=C4 导入；可试听和编辑。"
             self.detail.set(f"{song.title} · {SOURCES[song.source]}\n{condition}")
         self._buttons()
 
@@ -188,7 +193,7 @@ class ResourceSearchDialog:
             self.select()
             return
         self.downloading = True
-        self.status.set(f"正在下载并转换“{song.title}”…")
+        self.status.set(f"正在读取并导入简谱“{song.title}”…" if song.source == "jianpu" else f"正在下载并转换“{song.title}”…")
         self._buttons()
         threading.Thread(target=_download_worker, args=(song, self.library_dir, self.app.mapping(),
                                                         self.download_cancel, self.events, preview), daemon=True).start()
@@ -223,14 +228,14 @@ class ResourceSearchDialog:
                             item = str(len(self.songs))
                             self.songs[item] = song
                             self.tree.insert("", "end", iid=item, values=(song.title + (f" · {song.artist}" if song.artist else ""),
-                                             SOURCES[source], "直接下载" if song.downloadable else "源站登录 / 积分"))
+                                             SOURCES[source], "简谱 · 直接导入" if song.source == "jianpu" else "MIDI · 直接下载" if song.downloadable else "源站登录 / 积分"))
                         self.source_status[source] = f"第 {self.pages[source]} 页 · {len(page.songs)} 首"
                     if self.songs and not self.tree.selection():
                         self.tree.selection_set(next(iter(self.songs)))
                         self.select()
                     if not self.pending and not self.downloading:
-                        self.status.set("搜索完成。选择曲目下载，或加载更多结果；不可用的来源可重新搜索。" if self.songs
-                                        else "未找到可用结果。可换用别名或英文名，也可打开源站搜索。")
+                        self.status.set("搜索完成。选择曲目导入或试听；不可用的来源可重新搜索。" if self.songs
+                                        else "未找到匹配曲目。可换用别名、勾选 MIDI 来源，或打开源站；简谱空间曲目数量有限。")
                     self._summary()
                 elif kind == "download":
                     song, path, preview, error = value
@@ -241,9 +246,18 @@ class ResourceSearchDialog:
                         self.app.log.warning("聚合下载失败：%s；%s", song.page_url, error)
                         continue
                     self.app.log.info("聚合下载完成：%s；来源=%s；网页=%s；文件=%s", song.title, song.source, song.page_url, path)
+                    if self.app.busy or self.app.player.active:
+                        self.status.set(f"“{song.title}”已保存；结束当前演奏后可再次点击导入选曲。")
+                        continue
                     self.app._load_library(path)
+                    if self.app.current_source != ("file", path) or not self.app.plan:
+                        self.status.set("曲谱已保存但未能加载，请返回曲库检查。")
+                        continue
                     self.status.set(f"已下载并转换“{song.title}”，已选入本地曲库；关闭此窗口后可按 F8 游戏演奏。")
                     self.app.detail.set(f"已从 {SOURCES[song.source]} 下载并转换“{song.title}”。")
+                    if song.source == "jianpu":
+                        self.status.set(f"已导入简谱“{song.title}”。关闭此窗口后可试听、编辑或按 F8 演奏。")
+                        self.detail.set(self.app.subtitle.get())
                     if preview:
                         self.close()
                         self.app.play(preview=True)
@@ -257,7 +271,7 @@ class ResourceSearchDialog:
         if song:
             webbrowser.open(song.page_url)
         elif self.query.get().strip():
-            source = next((source for source in ("midishow", "bitmidi", "midiworld", "official")
+            source = next((source for source in ("jianpu", "midishow", "bitmidi", "midiworld", "official")
                            if self.enabled[source].get()), "midishow")
             webbrowser.open(search_url(source, self.query.get().strip()))
 

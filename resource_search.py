@@ -292,7 +292,7 @@ def resolve_download(song: SearchSong) -> str:
 
 def download_resource(song: SearchSong, library_dir: Path, mapping: Mapping,
                       cancel: threading.Event) -> Path:
-    """先验证下载与八键转换，成功后才把完整 MIDI 放入曲库。"""
+    """先验证下载与八键转换，成功后才把完整曲谱放入曲库。"""
     if cancel.is_set():
         raise SearchCancelled()
     if song.source == "jianpu":

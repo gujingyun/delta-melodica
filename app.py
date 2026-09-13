@@ -299,7 +299,7 @@ class App:
             button = ttk.Button(sidebar, text=text, command=command, style="Accent.TButton" if command == self.import_midi else "TButton")
             button.pack(fill="x", padx=18, pady=(0, 8))
             self.locked_widgets.append(button)
-        self.online_button = ttk.Button(sidebar, text="线上曲库 / 聚合搜索", command=self.resource_search_dialog)
+        self.online_button = ttk.Button(sidebar, text="搜简谱 / MIDI", command=self.resource_search_dialog)
         self.online_button.pack(fill="x", padx=18, pady=(0, 8))
         self.locked_widgets.append(self.online_button)
         self.edit_button = ttk.Button(sidebar, text="编辑选中乐曲", command=self.edit_song)
@@ -316,7 +316,7 @@ class App:
         track_card.pack(fill="x")
         tk.Label(track_card, text="NOW PLAYING  /  当前曲目", bg=CARD, fg=ACCENT, font=("Microsoft YaHei UI", 8, "bold")).pack(anchor="w", padx=22, pady=(16, 5))
         tk.Label(track_card, textvariable=self.title, bg=CARD, fg=TEXT, font=("Microsoft YaHei UI", 23, "bold"), anchor="w").pack(fill="x", padx=22)
-        tk.Label(track_card, textvariable=self.subtitle, bg=CARD, fg=MUTED, anchor="w").pack(fill="x", padx=22, pady=(3, 6))
+        tk.Label(track_card, textvariable=self.subtitle, bg=CARD, fg=MUTED, anchor="w", justify="left", wraplength=660).pack(fill="x", padx=22, pady=(3, 6))
         fields = tk.Frame(track_card, bg=CARD)
         fields.pack(fill="x", padx=22, pady=(0, 8))
         for column, (label, variable, values, width) in enumerate([
@@ -730,6 +730,9 @@ class App:
                         hint = "可编辑简谱 · 精确时值 · 本地修改版"
                     else:
                         hint = "云端曲谱 · 可离线演奏"
+                    if isinstance(data.get("jianpu_source"), dict):
+                        warnings = data["jianpu_source"].get("warnings", [])
+                        hint = "在线简谱 · 可编辑 / 离线演奏" + (" · " + " ".join(warnings) if warnings else " · 已读取谱中速度与调号")
                 else:
                     song = parse_jianpu(data["score"], float(data["bpm"]), data["title"])
                     hint = f"自定义简谱 · {data['bpm']} BPM"
@@ -1762,12 +1765,18 @@ def main():
                 assert root.state() == "withdrawn" and not app.closing
                 app.show_main()
                 assert root.state() == "normal"
-                midi_tested = 0
+                midi_tested, jianpu_tested = 0, 0
                 for _, source in app.entries:
                     if source[0] == "file" and source[1].suffix.lower() in (".mid", ".midi"):
                         imported = read_midi(source[1])
                         assert compile_plan(imported, app.mapping(), track="auto", style="piano").notes
                         midi_tested += 1
+                    elif source[0] == "file" and source[1].suffix.lower() == ".json":
+                        data = json.loads(source[1].read_text(encoding="utf-8"))
+                        if isinstance(data.get("jianpu_source"), dict):
+                            assert compile_plan(to_song(data), app.mapping(), style="original").notes
+                            assert parse_jianpu(data["editor"]["score"], data["editor"]["bpm"], precise=True).notes
+                            jianpu_tested += 1
                 app.edit_song()
                 editor = app.score_editor
                 assert editor and editor.parsed().notes, "乐曲编辑器未能打开曲谱"
@@ -1779,8 +1788,9 @@ def main():
                 assert search and not search.closed, "聚合搜索入口未能打开"
                 root.update()
                 assert search.search_button.winfo_ismapped(), "聚合搜索按钮不可见"
+                assert search.enabled["jianpu"].get(), "搜索窗口未默认选择简谱来源"
                 search.close()
-                Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": True, "notes": len(app.plan.notes), "midi_tested": midi_tested, "width": root.winfo_width(), "height": root.winfo_height(), "tray": True, "hide_restore": True, "editor": True, "aggregate_search": True}), encoding="utf-8")
+                Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": True, "notes": len(app.plan.notes), "midi_tested": midi_tested, "jianpu_tested": jianpu_tested, "width": root.winfo_width(), "height": root.winfo_height(), "tray": True, "hide_restore": True, "editor": True, "aggregate_search": True, "jianpu_search": True}), encoding="utf-8")
             except Exception as error:
                 smoke_exit = 1
                 Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": False, "error": str(error)}), encoding="utf-8")
