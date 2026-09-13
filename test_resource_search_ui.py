@@ -89,10 +89,11 @@ class ResourceSearchDialogTests(unittest.TestCase):
         self.assertEqual(from_song(editor.parsed()), {**from_song(self.app.song), "title": editor.name.get()})
         editor.close(force=True)
 
-    def test_default_search_focuses_on_jianpu(self):
+    def test_default_search_selects_all_sources(self):
         self.dialog.close()
         self.dialog = self.app.resource_search_dialog()
-        self.assertEqual([source for source, enabled in self.dialog.enabled.items() if enabled.get()], ["jianpu"])
+        self.assertEqual({source for source, enabled in self.dialog.enabled.items() if enabled.get()},
+                         {"jianpu", "official", "bitmidi", "midiworld", "midishow"})
         self.assertEqual(self.dialog.rule_mode.get(), "按谱面规则")
 
     def test_selected_rule_mode_is_used_for_import(self):

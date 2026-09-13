@@ -1821,7 +1821,7 @@ def main():
                 assert search and not search.closed, "聚合搜索入口未能打开"
                 root.update()
                 assert search.search_button.winfo_ismapped(), "聚合搜索按钮不可见"
-                assert search.enabled["jianpu"].get(), "搜索窗口未默认选择简谱来源"
+                assert all(enabled.get() for enabled in search.enabled.values()), "搜索窗口未默认选择全部来源"
                 assert search.rule_mode.get() == "按谱面规则", "简谱未默认使用谱面规则"
                 assert search.rule_combo.winfo_ismapped(), "简谱规则选择不可见"
                 search.close()
