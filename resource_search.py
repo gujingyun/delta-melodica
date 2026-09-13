@@ -11,6 +11,7 @@ import re
 import tempfile
 import threading
 import unicodedata
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -47,6 +48,19 @@ class SearchSong:
 class SearchPage:
     songs: list[SearchSong]
     has_more: bool = False
+
+
+@dataclass(frozen=True)
+class SearchProblem:
+    message: str
+    browser_required: bool = False
+
+    def __str__(self):
+        return self.message
+
+
+class SiteAccessError(ValueError):
+    """站点要求浏览器验证或拒绝后台访问，不作为零搜索结果处理。"""
 
 
 class SearchCancelled(Exception):
@@ -232,13 +246,38 @@ def parse_search_page(source: str, html: str, url: str, page: int = 1) -> Search
     return SearchPage(songs, has_more)
 
 
+def _verification_page(html: str, headers) -> bool:
+    """识别整页验证，避免把正常页面附带的 Cloudflare 脚本当成拦截。"""
+    if (headers or {}).get("cf-mitigated", "").lower() == "challenge":
+        return True
+    title = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+    title = title[1].casefold() if title else ""
+    return (any(text in title for text in ("just a moment", "请稍候", "attention required", "checking your browser"))
+            and any(marker in html.casefold() for marker in ("cf-chl-", "challenge-platform", "cloudflare")))
+
+
 def _fetch_html(url: str) -> str:
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html"})
-    with urllib.request.urlopen(request, timeout=12) as response:
-        body = response.read(MAX_PAGE_BYTES + 1)
+    try:
+        with urllib.request.urlopen(request, timeout=12) as response:
+            body = response.read(MAX_PAGE_BYTES + 1)
+            headers = response.headers
+    except urllib.error.HTTPError as error:
+        with error:
+            html = error.read(16384).decode("utf-8", errors="replace")
+        if _verification_page(html, error.headers):
+            raise SiteAccessError("需要浏览器人机验证；请在源站完成验证、下载后导入。") from None
+        if error.code == 403:
+            raise SiteAccessError("网站拒绝后台访问（403）；请在浏览器打开源站查看。") from None
+        if error.code == 429:
+            raise ValueError("网站请求过于频繁（429），请稍后重试。") from None
+        raise ValueError(f"网站暂时无法访问（HTTP {error.code}），请稍后重试。") from None
     if len(body) > MAX_PAGE_BYTES:
         raise ValueError("资源网站页面超过 2 MB")
-    return body.decode("utf-8", errors="replace")
+    html = body.decode("utf-8", errors="replace")
+    if _verification_page(html, headers):
+        raise SiteAccessError("需要浏览器人机验证；请在源站完成验证、下载后导入。")
+    return html
 
 
 def search_source(source: str, query: str, page: int = 1) -> SearchPage:
@@ -272,7 +311,7 @@ def search_all(query: str, pages: dict[str, int], cancel: threading.Event, resul
             try:
                 results.put(("source", (source, future.result(), None)))
             except Exception as error:
-                results.put(("source", (source, None, str(error))))
+                results.put(("source", (source, None, SearchProblem(str(error), isinstance(error, SiteAccessError)))))
 
 
 def resolve_download(song: SearchSong) -> str:
