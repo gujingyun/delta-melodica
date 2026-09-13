@@ -2,11 +2,11 @@
 
 ## 账号与私有曲库（开发预览）
 
-`account/` 提供邮箱登录、注册验证码、密码重置、游客曲谱备份导入、注册继承、账号曲库同步及下载。通过独立 `/melodica/account-api/` 接口访问后端，静态站点不直接读取 SQLite。需要按 [后端说明](../server/README.md) 配置服务和 SMTP 后部署。
+`account/` 提供邮箱登录、注册验证码、密码重置、游客曲谱备份导入、注册继承、账号曲库同步及下载。通过独立 `/melodica/account-api/` 接口访问后端，静态站点不直接读取 SQLite。[线上账号页](https://aiygzn.top/melodica/account/)及阿里云 SMTP 已部署，配置见[后端说明](../server/README.md)。
 
 网页身份使用 HttpOnly Cookie，本机曲谱使用 IndexedDB 并按账号隔离。游客曲谱仅保存在当前浏览器；清除网站数据会移除本机曲谱，请下载备份。注册只继承当前浏览器的曲谱，其他设备需在对应客户端合并。曲谱 JSON 导入有 2 MB 和 30000 音符限制，MIDI／文本简谱请通过客户端导入。
 
-静态账号页需随 `account.js`、`account.css` 一同部署，Nginx 示例包含严格来源策略及专用 API 反代，不改变原统计服务。账号 API 未部署时明确提示服务暂不可用。当前线上站点尚未发布此开发预览。
+静态账号页需随 `account.js`、`account.css` 一同部署，Nginx 示例包含严格来源策略及专用 API 反代，不改变原统计服务。账号 API 不可用时明确提示服务暂不可用。线上主页已增加「账号 / 我的曲库」入口；公开下载仍为 v0.13，客户端账号功能使用预览版。
 
 这是挂载在 `https://aiygzn.top/melodica/` 的静态介绍页。
 
