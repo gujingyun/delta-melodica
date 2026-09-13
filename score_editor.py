@@ -17,9 +17,10 @@ from win_input import PreviewOutput
 
 
 class ScoreEditor:
-    def __init__(self, app):
+    def __init__(self, app, new=False):
         from app import BG, CARD, DEEP, TEXT, MUTED, ACCENT, LINE, PLAY_STYLES
         self.app = app
+        self.new = new
         self.styles = PLAY_STYLES
         self.events = queue.Queue()
         self.player = Player(lambda run_id, kind, value: self.events.put((run_id, kind, value)))
@@ -32,19 +33,21 @@ class ScoreEditor:
         self.notation, self.source_mode, self.source_url = "simple", "score", ""
         text, bpm = self.source_text()
         self.is_source = self.notation == "jianpu_space"
-        self.dialog = app._dialog("编辑乐曲 · 简谱工作台", "1180x800" if self.is_source else "920x710")
+        self.dialog = app._dialog("新建简谱 · 简谱工作台" if new else "编辑乐曲 · 简谱工作台",
+                                  "1180x800" if self.is_source else "920x710")
         # Windows 的临时对话框没有最大化按钮；编辑器使用普通窗口边框，仍保留模态抓取。
         self.dialog.transient("")
         self.dialog.resizable(True, True)
         self.dialog.minsize(960 if self.is_source else 820, 720 if self.is_source else 650)
         self.dialog.protocol("WM_DELETE_WINDOW", self.close)
-        title = app.song.title if app.song.title.endswith(" · 修改版") else app.song.title[:94] + " · 修改版"
+        title = "我的旋律" if new else (app.song.title if app.song.title.endswith(" · 修改版") else app.song.title[:94] + " · 修改版")
         self.name = tk.StringVar(self.dialog, value=title)
         self.bpm = tk.StringVar(self.dialog, value=str(bpm))
-        self.style = tk.StringVar(self.dialog, value=app.arrangement.get())
+        self.style = tk.StringVar(self.dialog, value="原谱 · 分音" if new else app.arrangement.get())
         self.shift = tk.StringVar(self.dialog, value="0")
         self.summary = tk.StringVar(self.dialog)
-        self.status = tk.StringVar(self.dialog, value="修改后可先试听，再另存到曲库。原曲会保留。")
+        self.ready_status = "填写曲名并编辑谱文，可先试听，再保存到曲库。" if new else "修改后可先试听，再另存到曲库。原曲会保留。"
+        self.status = tk.StringVar(self.dialog, value=self.ready_status)
 
         # 先安排底栏，窗口缩小或字体放大时保存和停止仍可见。
         footer = tk.Frame(self.dialog, bg=CARD)
@@ -58,22 +61,22 @@ class ScoreEditor:
         self.selection_button = ttk.Button(actions, text="试听选中", command=lambda: self.preview(True))
         self.selection_button.pack(side="left", padx=8)
         ttk.Button(actions, text="停止  F9", command=self.stop_preview).pack(side="left")
-        self.save_button = ttk.Button(actions, text="另存到曲库", style="Accent.TButton", command=self.save)
+        self.save_button = ttk.Button(actions, text="保存到曲库" if new else "另存到曲库", style="Accent.TButton", command=self.save)
         self.save_button.pack(side="right")
 
         header = tk.Frame(self.dialog, bg=CARD)
         header.pack(fill="x", padx=24, pady=(14 if self.is_source else 20, 12))
-        track = app.track_combo.get()
+        source_label = "从示例谱文开始，写下你的旋律" if new else f"{app.song.title[:35]}  ·  {app.track_combo.get()[:35]}"
         if self.is_source:
             tk.Label(header, text="编辑原谱，边改边看", fg=TEXT, bg=CARD,
                      font=("Microsoft YaHei UI", 17, "bold")).pack(side="left")
-            tk.Label(header, text=f"{app.song.title[:35]}  ·  {track[:35]}", fg=MUTED, bg=CARD).pack(side="right")
+            tk.Label(header, text=source_label, fg=MUTED, bg=CARD).pack(side="right")
         else:
             tk.Label(header, text="SCORE EDITOR  /  乐曲编辑", fg=ACCENT, bg=CARD,
                      font=("Microsoft YaHei UI", 9, "bold")).pack(anchor="w")
             tk.Label(header, text="让每个音符，按你的想法演奏", fg=TEXT, bg=CARD,
                      font=("Microsoft YaHei UI", 19, "bold")).pack(anchor="w", pady=(5, 7))
-            tk.Label(header, text=f"来源：{app.song.title[:35]}  ·  {track[:35]}", fg=MUTED, bg=CARD,
+            tk.Label(header, text=f"来源：{source_label}", fg=MUTED, bg=CARD,
                      anchor="w").pack(fill="x")
         fields = tk.Frame(self.dialog, bg=CARD)
         fields.pack(fill="x", padx=24, pady=(0, 12))
@@ -159,6 +162,9 @@ class ScoreEditor:
         self.poll_timer = self.dialog.after(50, self.poll)
 
     def source_text(self):
+        if self.new:
+            self.notation = "jianpu_space"
+            return "/key(C4)\nbpm100\n1 2 3 1 | 1 2 3 1 | 3 4 5-", 100
         source = self.app.current_source
         if source[0] == "demo":
             bpm, score = DEMO_SCORES[source[1]]
@@ -338,7 +344,7 @@ class ScoreEditor:
                         self.text.tag_add("directive", self.text_index(glyph.start), self.text_index(glyph.end))
             self.summary.set(f"{len(song.notes)} 音  ·  {song.duration:.2f} 秒")
             self.status.set("修改尚未保存 · 可试听全曲或选中片段。" if self.snapshot() != self.initial else
-                            "修改后可先试听，再另存到曲库。原曲会保留。")
+                            self.ready_status)
         except ValueError as error:
             self.summary.set("请检查简谱")
             self.status.set(str(error))
@@ -451,7 +457,8 @@ class ScoreEditor:
         self.close(force=True)
         self.app._load_library(path)
         self.app.save_song_preferences()
-        self.app.detail.set("修改版已保存到曲库，原曲保留。可继续编辑或按 F8 演奏。")
+        self.app.detail.set("新简谱已保存到曲库。可本机试听、继续编辑或按 F8 演奏。" if self.new else
+                            "修改版已保存到曲库，原曲保留。可继续编辑或按 F8 演奏。")
 
     def close(self, force=False):
         if self.closed:

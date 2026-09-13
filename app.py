@@ -295,7 +295,7 @@ class App:
         self.library.pack(side="left", fill="both", expand=True)
         self.library.bind("<<ListboxSelect>>", self.select_song)
         self.locked_widgets.append(self.library)
-        for text, command in (("＋  导入曲谱 / MIDI", self.import_midi), ("＋  输入简谱", self.score_dialog)):
+        for text, command in (("＋  导入曲谱 / MIDI", self.import_midi), ("＋  新建简谱", self.score_dialog)):
             button = ttk.Button(sidebar, text=text, command=command, style="Accent.TButton" if command == self.import_midi else "TButton")
             button.pack(fill="x", padx=18, pady=(0, 8))
             self.locked_widgets.append(button)
@@ -1182,45 +1182,20 @@ class App:
         dialog.grab_set()
         return dialog
 
-    def edit_song(self):
+    def edit_song(self, new=False):
         if self.score_editor:
             self.score_editor.dialog.lift()
             return
-        if not self.song or self.busy or self.player.active:
+        if (not new and not self.song) or self.busy or self.player.active:
             return
         try:
             from score_editor import ScoreEditor
-            self.score_editor = ScoreEditor(self)
+            self.score_editor = ScoreEditor(self, new=new)
         except (ValueError, OSError, KeyError, TypeError) as error:
-            messagebox.showerror("无法编辑乐曲", str(error), parent=self.root)
+            messagebox.showerror("无法新建简谱" if new else "无法编辑乐曲", str(error), parent=self.root)
 
     def score_dialog(self):
-        dialog = self._dialog("新建简谱", "720x510")
-        dialog.minsize(660, 480)
-        name, bpm = tk.StringVar(value="我的旋律"), tk.StringVar(value="100")
-        fields = tk.Frame(dialog, bg=CARD)
-        fields.pack(fill="x", padx=22, pady=20)
-        for label, variable, width in (("曲名", name, 28), ("BPM", bpm, 8)):
-            tk.Label(fields, text=label, bg=CARD, fg=TEXT).pack(side="left", padx=(0, 8))
-            ttk.Entry(fields, textvariable=variable, width=width).pack(side="left", padx=(0, 18))
-        tk.Label(dialog, text="用空格分隔：1 2 3:2 +1 -5 #4 0\n+1 高音 1；-1 低音 1；#4 升半音；b3 降半音；0 休止\n:2 两拍；:0.5 或 :1/2 半拍；竖线 | 仅作分节标记。", justify="left", bg=CARD, fg=MUTED).pack(anchor="w", padx=22)
-        editor = tk.Text(dialog, bg=DEEP, fg=TEXT, insertbackground=TEXT, wrap="word", bd=0, padx=12, pady=12, font=("Consolas", 13))
-        editor.pack(fill="both", expand=True, padx=22, pady=16)
-        editor.insert("1.0", "1 2 3 1 | 1 2 3 1 | 3 4 5:2")
-
-        def save():
-            try:
-                score = editor.get("1.0", "end").strip()
-                song = parse_jianpu(score, float(bpm.get()), name.get())
-                safe_name = "".join(c for c in song.title if c not in '<>:"/\\|?*' and ord(c) >= 32).rstrip(" .")[:70] or "我的旋律"
-                destination = self.library_dir / (uuid.uuid4().hex[:8] + "__" + safe_name + ".json")
-                destination.write_text(json.dumps({"title": song.title, "bpm": float(bpm.get()), "score": score}, ensure_ascii=False, indent=2), encoding="utf-8")
-                dialog.destroy()
-                self._load_library(destination)
-            except (ValueError, OSError) as error:
-                messagebox.showerror("简谱未保存", str(error), parent=dialog)
-        # 先为底部按钮预留空间，避免文本框在默认窗口或高缩放下把它挤掉。
-        ttk.Button(dialog, text="保存到曲库", style="Accent.TButton", command=save).pack(side="bottom", before=editor, anchor="e", padx=22, pady=(0, 20))
+        self.edit_song(new=True)
 
     def settings_dialog(self):
         dialog = self._dialog("键位与演奏设置", "660x690")
@@ -1867,6 +1842,14 @@ def main():
                     preview.mark_playing(None)
                 if args.smoke_online:
                     capture(editor.dialog, "online-score-editor.png")
+                editor.close(force=True)
+                app.score_dialog()
+                editor = app.score_editor
+                root.update()
+                assert editor and editor.is_source, "新建简谱没有打开原谱工作台"
+                assert editor.name.get() == "我的旋律", "新建简谱错误沿用了选中曲名"
+                assert editor.parsed().notes and editor.score_preview.glyphs, "新建谱文或谱面预览为空"
+                assert editor.save_button.winfo_ismapped(), "新建简谱保存按钮不可见"
                 editor.close(force=True)
                 app.online_button.invoke()
                 search = app.resource_search
