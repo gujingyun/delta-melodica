@@ -52,6 +52,16 @@ public final class FeatureChecks extends Instrumentation {
             ActivityMonitor monitor = addMonitor(ScoreEditorActivity.class.getName(), null, false);
             click(main, "编辑"); ScoreEditorActivity editor = (ScoreEditorActivity) waitForMonitorWithTimeout(monitor, 5000); removeMonitor(monitor); check(editor != null, "编辑器未打开"); current = editor; idle();
             EditText notes = (EditText) field(editor, "notes"); check(source.contentEquals(notes.getText()), "重开未保留原谱"); screenshot("editor-text");
+            if (layout.equals("keyboard")) {
+                ui(() -> { check(notes.requestFocusFromTouch(), "谱文无法获得焦点"); notes.setSelection(notes.length()); ((android.view.inputmethod.InputMethodManager) editor.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)).showSoftInput(notes, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT); });
+                SystemClock.sleep(1400); screenshot("editor-keyboard");
+                View scrolling = (View) field(editor, "textScroll");
+                report.append("键盘布局：编辑区=").append(scrolling.getHeight()).append(" 像素，谱文焦点=").append(notes.hasFocus()).append('\n');
+                check(scrolling.getHeight() >= Ui.dp(editor, 90), "软键盘挤占了编辑区");
+                check(notes.hasFocus(), "谱文输入焦点丢失"); sendStringSync(" 1"); check(notes.getText().toString().equals(source + " 1"), "键盘输入未进入谱文"); ui(() -> notes.setText(source));
+                visible(editor, "另存到曲库");
+                ui(() -> ((android.view.inputmethod.InputMethodManager) editor.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(notes.getWindowToken(), 0)); idle();
+            }
             int firstNote = source.indexOf("1_"); ui(() -> notes.setSelection(firstNote, source.indexOf("[1")));
             click(editor, "试听选中"); SystemClock.sleep(100); check(((PreviewPlayer) field(editor, "player")).playing(), "选段试听未开始"); click(editor, "停止");
             if (!layout.startsWith("landscape")) click(editor, "谱面"); screenshot("editor-score"); visible(editor, "另存到曲库"); visible(editor, "试听全曲");
@@ -65,6 +75,9 @@ public final class FeatureChecks extends Instrumentation {
             report.append("通过：原谱重开、选段试听、谱面跟随、错误阻止、另存副本及原曲保留\n");
             monitor = addMonitor(SearchActivity.class.getName(), null, false); click(main, "搜简谱 / MIDI");
             SearchActivity search = (SearchActivity) waitForMonitorWithTimeout(monitor, 5000); removeMonitor(monitor); check(search != null, "聚合搜索入口未打开"); current = search; idle();
+            if (layout.equals("keyboard")) {
+                EditText query = (EditText) field(search, "query"); ui(() -> { query.requestFocusFromTouch(); ((android.view.inputmethod.InputMethodManager) search.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)).showSoftInput(query, 0); }); SystemClock.sleep(1000);
+            }
             visible(search, "聚合搜索"); visible(search, "返回曲库"); boolean[] sources = (boolean[]) field(search, "sources"); for (boolean enabled : sources) check(enabled, "未默认启用所有来源"); screenshot("search");
             ui(search::finish); current = main; idle(); report.append("通过：聚合搜索页面、五个来源默认全选、返回入口\n");
         } catch (Throwable error) { code = Activity.RESULT_CANCELED; report.append("失败：").append(android.util.Log.getStackTraceString(error)); }

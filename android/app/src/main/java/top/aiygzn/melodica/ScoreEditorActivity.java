@@ -85,6 +85,19 @@ public final class ScoreEditorActivity extends Activity {
             area.addView(split, new android.widget.FrameLayout.LayoutParams(-1, -1));
         }
         player = new PreviewPlayer(this, this::onProgress);
+        // 键盘可能首先聚焦曲名；先收起说明区，避免谱文被压成零高后无法获得焦点。
+        getWindow().getDecorView().setOnApplyWindowInsetsListener((view, insets) -> {
+            boolean keyboard = android.os.Build.VERSION.SDK_INT >= 30
+                ? insets.isVisible(android.view.WindowInsets.Type.ime())
+                : insets.getSystemWindowInsetBottom() > Ui.dp(this, 160);
+            boolean landscape = getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+            root.getChildAt(0).setVisibility(keyboard || landscape ? View.GONE : View.VISIBLE); root.getChildAt(1).setVisibility(keyboard || landscape ? View.GONE : View.VISIBLE);
+            title.setVisibility(keyboard && !title.hasFocus() ? View.GONE : View.VISIBLE); options.setVisibility(keyboard && !bpm.hasFocus() ? View.GONE : View.VISIBLE);
+            tabs.setVisibility(keyboard || landscape ? View.GONE : View.VISIBLE);
+            int lines = keyboard || landscape ? 1 : 3; if (status.getMaxLines() != lines) status.setMaxLines(lines);
+            return view.onApplyWindowInsets(insets);
+        });
+        root.getViewTreeObserver().addOnGlobalFocusChangeListener((oldFocus, newFocus) -> getWindow().getDecorView().requestApplyInsets());
         Ui.watch(notes, () -> {
             if (changing) return; String current = notes.getText().toString();
             if (!current.equals(previousText)) { undo.add(previousText); if (undo.size() > 30) undo.remove(0); redo.clear(); previousText = current; changed(); }

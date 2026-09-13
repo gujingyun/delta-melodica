@@ -62,6 +62,14 @@ public final class SearchActivity extends Activity {
             root.removeView(query); actions.addView(query, 0, new LinearLayout.LayoutParams(0, -2, 2));
             status.setMaxLines(2);
         }
+        getWindow().getDecorView().setOnApplyWindowInsetsListener((view, insets) -> {
+            boolean keyboard = android.os.Build.VERSION.SDK_INT >= 30 ? insets.isVisible(android.view.WindowInsets.Type.ime()) : insets.getSystemWindowInsetBottom() > Ui.dp(this, 160);
+            boolean landscape = getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+            root.getChildAt(0).setVisibility(keyboard ? android.view.View.GONE : android.view.View.VISIBLE);
+            root.getChildAt(1).setVisibility(keyboard || landscape ? android.view.View.GONE : android.view.View.VISIBLE);
+            int lines = keyboard ? 1 : landscape ? 2 : 3; if (status.getMaxLines() != lines) status.setMaxLines(lines);
+            return view.onApplyWindowInsets(insets);
+        });
         if (state != null && state.getBooleanArray("sources") != null) {
             System.arraycopy(state.getBooleanArray("sources"), 0, sources, 0, sources.length); int count = 0; for (boolean enabled : sources) if (enabled) count++;
             filters.setText("已选 " + count + " 个来源 · 点此选择");
