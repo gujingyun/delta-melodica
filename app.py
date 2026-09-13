@@ -1798,6 +1798,23 @@ def main():
                     assert editor.score_preview.glyphs, "谱面预览为空"
                 root.update()
                 assert editor.save_button.winfo_ismapped(), "编辑器保存按钮不可见"
+                assert not editor.dialog.transient(), "编辑器仍使用无最大化按钮的对话框边框"
+                editor.dialog.state("zoomed")
+                root.update()
+                assert editor.dialog.state() == "zoomed", "编辑器无法最大化"
+                if source_to_edit:
+                    trace = []
+                    editor.parsed(trace=trace)
+                    preview = editor.score_preview
+                    preview.mark_playing(trace[-1][:2])
+                    root.update()
+                    assert preview.playing_index is not None, "末尾音符没有显示播放标记"
+                editor.dialog.state("normal")
+                root.update()
+                assert editor.dialog.state() == "normal", "编辑器无法还原"
+                if source_to_edit:
+                    assert preview.playing_index is not None, "窗口还原丢失播放标记"
+                    preview.mark_playing(None)
                 editor.close(force=True)
                 app.online_button.invoke()
                 search = app.resource_search
