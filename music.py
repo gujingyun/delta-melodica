@@ -84,14 +84,14 @@ def pitch_name(pitch: int) -> str:
     return ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")[pitch % 12] + str(pitch // 12 - 1)
 
 
-def parse_jianpu(text: str, bpm: float = 100, title: str = "自定义简谱") -> Song:
+def parse_jianpu(text: str, bpm: float = 100, title: str = "自定义简谱", *, precise=False) -> Song:
     if not math.isfinite(bpm) or not 20 <= bpm <= 300:
         raise ValueError("速度需在 20～300 BPM 之间。")
     notes, cursor = [], 0.0
-    pattern = re.compile(r"([+-]?)([#b]?)([0-7])(?::(\d+(?:/\d+|\.\d+)?))?")
+    pattern = re.compile(r"(\+{0,5}|-{1,5})([#b]?)([0-7])(?::(\d+(?:/\d+|\.\d+)?))?")
     clean = re.sub(r"//[^\n]*", "", text).replace("|", " ").replace("，", " ")
     tokens = clean.split()
-    if len(tokens) > 30000:
+    if len(tokens) > (60001 if precise else 30000):
         raise ValueError("乐谱最多支持 30000 个音符。")
     for token in tokens:
         match = pattern.fullmatch(token)
@@ -102,21 +102,79 @@ def parse_jianpu(text: str, bpm: float = 100, title: str = "自定义简谱") ->
             beats = float(Fraction(duration or "1"))
         except (ValueError, ZeroDivisionError, OverflowError):
             raise ValueError(f"「{token}」的时值不正确。") from None
-        if not 0.03125 <= beats <= 64:
-            raise ValueError("每个音符的时值需在 1/32～64 拍之间。")
+        minimum, maximum = (0.000000001, 9000) if precise else (0.03125, 64)
+        if not minimum <= beats <= maximum:
+            raise ValueError("音符时值必须大于零且不超过 9000 拍。" if precise else "每个音符的时值需在 1/32～64 拍之间。")
         end = cursor + beats * 60 / bpm
         if degree != "0":
-            pitch = 60 + SCALE[int(degree)-1] + {"": 0, "+": 12, "-": -12}[octave]
+            pitch = 60 + SCALE[int(degree)-1] + (octave.count("+")-octave.count("-"))*12
             pitch += {"": 0, "#": 1, "b": -1}[accidental]
+            if not 0 <= pitch <= 127:
+                raise ValueError(f"「{token}」超出 MIDI 音高 0～127 的范围。")
             notes.append(Note(cursor, end, pitch))
         elif octave or accidental:
             raise ValueError("休止符 0 不需要八度或升降号。")
         cursor = end
     if not notes:
         raise ValueError("乐谱中没有可演奏的音符。")
+    if len(notes) > 30000:
+        raise ValueError("乐谱最多支持 30000 个音符。")
     if cursor > 1800:
         raise ValueError("第一版支持最长 30 分钟的曲目。")
     return Song(title.strip() or "自定义简谱", notes, duration=cursor)
+
+
+def jianpu_pitch(pitch: int) -> str:
+    """使用重复的八度符号表达完整 MIDI 音域，不提前折回游戏音域。"""
+    if not 0 <= pitch <= 127:
+        raise ValueError("移调后超出 MIDI 音高 0～127 的范围。")
+    octave = pitch // 12 - 5
+    prefix = "+"*octave if octave >= 0 else "-"*(-octave)
+    return prefix + ("1", "#1", "2", "#2", "3", "4", "#4", "5", "#5", "6", "#6", "7")[pitch % 12]
+
+
+def song_to_jianpu(song: Song, track: int | str | None = "auto", style="original", bpm=120) -> str:
+    """按所选音轨提取完整原速旋律，精确拍数承载 MIDI 的变速和休止。"""
+    if not math.isfinite(bpm) or not 20 <= bpm <= 300:
+        raise ValueError("速度需在 20～300 BPM 之间。")
+    if style not in ("original", "piano"):
+        raise ValueError("请选择原谱分音或钢琴适配连奏。")
+    if track == "auto":
+        track = recommend_track(song)
+    source = [note for note in song.notes if track is None or note.track == track]
+    melody = piano_melody(source) if style == "piano" else monophonic(source)
+    if not melody:
+        raise ValueError("所选音轨没有音符。")
+    tokens, cursor = [], 0.0
+
+    def append_token(pitch, beats):
+        duration = f"{beats:.9f}".rstrip("0").rstrip(".")
+        tokens.append(pitch if duration == "1" else f"{pitch}:{duration}")
+
+    for note in melody:
+        start, end = round(note.start*bpm/60, 9), round(note.end*bpm/60, 9)
+        if start > cursor:
+            append_token("0", start-cursor)
+        append_token(jianpu_pitch(note.pitch), max(0.000000001, end-start))
+        cursor = end
+    end = round(song.duration*bpm/60, 9)
+    if end > cursor:
+        append_token("0", end-cursor)
+    return "\n".join("  ".join(tokens[index:index+8]) for index in range(0, len(tokens), 8))
+
+
+def transpose_jianpu(text: str, semitones: int) -> str:
+    """只修改音高，保留原有时值、休止、分节和中文注释。"""
+    parse_jianpu(text, 300, precise=True)
+
+    def replace(match):
+        token = match.group()
+        if token.startswith("//") or token.startswith("0"):
+            return token
+        pitch = parse_jianpu(token, 300, precise=True).notes[0].pitch
+        return jianpu_pitch(pitch+semitones) + (":"+token.split(":", 1)[1] if ":" in token else "")
+
+    return re.sub(r"//[^\n]*|(?:\+{0,5}|-{1,5})[#b]?[0-7](?::\d+(?:/\d+|\.\d+)?)?", replace, text)
 
 
 def _decode_track_name(name: str) -> str:
