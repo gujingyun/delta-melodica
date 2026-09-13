@@ -46,6 +46,7 @@ class AccountPanel:
                  font=("Microsoft YaHei UI", 14, "bold")).pack(anchor="w", pady=(0, 12))
         self.message = tk.StringVar(value=self.client.warning)
         if self.client.user:
+            self.dialog.geometry("540x650")
             tk.Label(box, text="账号曲库支持离线演奏。点击同步会合并本机和云端曲目。\n速度、移调和片段设置保留在当前设备。",
                      bg=BG, fg=MUTED, justify="left", wraplength=450).pack(anchor="w", pady=(0, 12))
             self.button(box, "同步我的云端曲库", self.sync)
@@ -53,21 +54,31 @@ class AccountPanel:
             self.button(box, "退出登录，使用游客模式", lambda: self.run(self.client.logout, self.logged_out))
         else:
             self.mode = tk.StringVar(value="login")
+            self.form_mode = None
             modes = tk.Frame(box, bg=BG)
             modes.pack(fill="x", pady=(0, 12))
             for label, mode in (("登录", "login"), ("注册", "register"), ("找回密码", "reset")):
                 self.buttons.append(ttk.Radiobutton(modes, text=label, value=mode, variable=self.mode, command=self.update_form))
                 self.buttons[-1].pack(side="left", padx=(0, 16))
             self.email, self.password, self.code = tk.StringVar(), tk.StringVar(), tk.StringVar()
-            for label, variable, masked in (("邮箱", self.email, False), ("密码 / 新密码（10～128 字符）", self.password, True),
-                                             ("邮箱验证码（注册或找回密码时填写）", self.code, False)):
-                tk.Label(box, text=label, bg=BG, fg=MUTED).pack(anchor="w", pady=(8, 4))
+            for label, variable, masked in (("邮箱", self.email, False), ("密码", self.password, True)):
+                field_label = tk.Label(box, text=label, bg=BG, fg=MUTED)
+                field_label.pack(anchor="w", pady=(8, 4))
                 entry = ttk.Entry(box, textvariable=variable, show="●" if masked else "")
                 entry.pack(fill="x")
                 self.buttons.append(entry)
-            self.send_button = self.button(box, "发送邮箱验证码", self.send_code)
+                if masked:
+                    self.password_label = field_label
+            self.verification = tk.Frame(box, bg=BG)
+            tk.Label(self.verification, text="邮箱验证码", bg=BG, fg=MUTED).pack(anchor="w", pady=(8, 4))
+            code_entry = ttk.Entry(self.verification, textvariable=self.code)
+            code_entry.pack(fill="x")
+            self.buttons.append(code_entry)
+            self.send_button = self.button(self.verification, "发送邮箱验证码", self.send_code)
             self.submit_button = self.button(box, "登录", self.submit)
-            tk.Label(box, text="游客仍可导入、试听、演奏和下载公开曲库。\n注册后，本机游客曲谱会自动归入此账号并同步至私有云端。原曲保留在本机，退出登录后仍可使用。",
+            self.submit_button.configure(style="Accent.TButton")
+            self.form_hint = tk.StringVar()
+            tk.Label(box, textvariable=self.form_hint,
                      bg=BG, fg=MUTED, wraplength=450, justify="left").pack(anchor="w", pady=14)
             self.update_form()
         tk.Label(box, textvariable=self.message, bg=BG, fg=TEXT, wraplength=450, justify="left").pack(fill="x", pady=14)
@@ -81,8 +92,26 @@ class AccountPanel:
 
     def update_form(self):
         mode = self.mode.get()
-        self.submit_button.configure(text={"login": "登录", "register": "验证邮箱并注册", "reset": "验证邮箱并重置密码"}[mode])
+        if mode != self.form_mode:
+            # 邮箱沿用，密码、验证码和提示不跨流程残留。
+            self.password.set("")
+            self.code.set("")
+            self.message.set(self.client.warning)
+            self.form_mode = mode
+        self.password_label.configure(text={"login": "密码", "register": "设置密码（10～128 字符）",
+                                            "reset": "新密码（10～128 字符）"}[mode])
+        self.submit_button.configure(text={"login": "登录", "register": "注册", "reset": "重置密码"}[mode])
+        if mode == "login":
+            self.verification.pack_forget()
+        else:
+            self.verification.pack(fill="x", before=self.submit_button)
         self.send_button.configure(state="disabled" if mode == "login" else "normal")
+        self.form_hint.set({
+            "login": "登录后可同步私有云端曲库。\n游客仍可导入、试听、演奏和下载公开曲库。",
+            "register": "注册后，本机游客曲谱会自动归入此账号并同步至私有云端。原曲保留在本机，退出登录后仍可使用。",
+            "reset": "使用注册邮箱接收验证码并设置新密码。\n重置成功后，所有设备需使用新密码重新登录。",
+        }[mode])
+        self.dialog.geometry("540x500" if mode == "login" else "540x650")
 
     def run(self, action, complete=None):
         if self.running:
@@ -131,6 +160,8 @@ class AccountPanel:
         app._load_library()
 
     def send_code(self):
+        if self.mode.get() == "login":
+            return
         payload = {"email": self.email.get().strip(), "purpose": self.mode.get()}
         self.run(lambda: self.client.request("POST", "/auth/request-code", payload))
 
@@ -140,7 +171,8 @@ class AccountPanel:
             self.message.set("密码需为 10～128 个字符")
             return
         if mode == "reset":
-            self.run(lambda: self.client.request("POST", "/auth/reset-password", {"email": email, "password": password, "code": code}))
+            self.run(lambda: self.client.request("POST", "/auth/reset-password", {"email": email, "password": password, "code": code}),
+                     self.password_reset)
             self.password.set("")
             return
         def authenticate():
@@ -151,6 +183,14 @@ class AccountPanel:
             return None
         self.run(authenticate, lambda result, error: self.authenticated(mode, result, error))
         self.password.set("")
+
+    def password_reset(self, result, error):
+        if error:
+            self.message.set(error)
+            return
+        self.mode.set("login")
+        self.update_form()
+        self.message.set(result["message"])
 
     def authenticated(self, mode, result, error):
         if not self.client.user:
