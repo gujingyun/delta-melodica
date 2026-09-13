@@ -4,7 +4,9 @@
 
 Windows 客户端改用炭黑与浅绿配色，统一品牌标识、按钮层级、曲库侧栏与八键样式。音轨、速度、移调和演奏方式集中在同一行，为旋律预览保留空间；默认窗口为 1180×840，最小为 1040×780。曲库增加滚动条，播放与停止入口保持可见。
 
-此轮仅在 `codex/interface-refresh` 分支开发和本地验证，公开下载仍为 v0.13，等待界面确认后再安排部署。客户端效果见[实际窗口截图](website/assets/main-window-refresh.png)。
+此轮仅完成本地验证，桌面与网页改动推送到 `codex/interface-refresh-preview` 供审阅，公开下载仍为 v0.13，等待界面确认后再安排部署。客户端效果见[实际窗口截图](website/assets/main-window-refresh.png)。
+
+网站主页同步优化导航、首屏、功能卡片、教程与下载区，适配手机浏览；账号页沿用同一套配色。效果见[桌面主页](docs/homepage-refresh-desktop.png)、[手机主页](docs/homepage-refresh-mobile.png)，本地启动与验证步骤见 [website/README.md](website/README.md)。主页明确标注客户端截图为待发布设计，现有下载入口和版本号保持原值。
 
 账号与云端曲库开发预览：支持邮箱注册、邮箱验证、登录、找回密码及多设备曲谱同步。[官网账号入口](https://aiygzn.top/melodica/account/)与独立 SQLite 后端已部署，阿里云真实邮件注册、找回密码及线上曲库接口互通已验证通过，详见[验证记录](验证记录.md)。后端配置见 [server/README.md](server/README.md)。当前公开下载版仍为 v0.13，客户端账号功能需使用账号预览版。
 

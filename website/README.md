@@ -1,5 +1,31 @@
 # 三角洲口风琴介绍页
 
+## 界面优化预览（待确认，未部署）
+
+主页使用与 Windows 客户端一致的炭黑、浅绿配色及音量柱标识，重新整理导航、下载入口、客户端展示、视频、功能卡片和使用指南。账号页同步基础配色。`assets/main-window-refresh.png` 为隔离数据环境中的真实客户端截图，页面标注为待发布设计；现有 `api/download`、视频资源、统计接口和 `version.json` 保持原有约定。
+
+本地只看静态页面，在仓库根目录执行：
+
+```powershell
+.\.venv\Scripts\python.exe -m http.server 8768 --bind 127.0.0.1 --directory website
+```
+
+打开 `http://127.0.0.1:8768/`。该静态预览用于确认界面，不提供下载统计和账号 API。停止该终端即可关闭预览。不要把本地测试服务当成部署入口。
+
+完整本机联调（临时数据库、假邮件，需 `server/requirements-test.txt` 中的依赖以及本机 Chrome）：
+
+```powershell
+.\.venv\Scripts\python.exe server/test_web_server.py
+# 在另一终端执行以下命令。
+npm --prefix website install
+npm --prefix website run test:homepage
+npm --prefix website run test:accounts
+```
+
+`test:homepage` 检查 320 / 390 / 768 / 1440 px 布局、图片加载、下载入口、锚点、键盘访问、视频延迟加载和错误重试，截图写入忽略的 `work/ui-refresh/`。`test:accounts` 验证本机假邮件及临时账号流程，未发送真实邮件。支持用 `PLAYWRIGHT_MODULE` 指定已有 Playwright 路径；主页测试地址仅允许本机回环地址。
+
+本轮预览截图：[桌面主页](../docs/homepage-refresh-desktop.png)、[手机主页](../docs/homepage-refresh-mobile.png)。发布前仍需用户确认设计、安排正式资源及服务验证，本轮未操作线上服务器。
+
 ## 账号与私有曲库（开发预览）
 
 `account/` 提供邮箱登录、注册验证码、密码重置、游客曲谱备份导入、注册继承、账号曲库同步及下载。通过独立 `/melodica/account-api/` 接口访问后端，静态站点不直接读取 SQLite。[线上账号页](https://aiygzn.top/melodica/account/)及阿里云 SMTP 已部署，配置见[后端说明](../server/README.md)。
