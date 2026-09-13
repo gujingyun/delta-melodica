@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="service_description">按你选择的曲谱，在你校准并绑定的游戏窗口发送触摸手势。读取窗口所属应用用于切出暂停，不读取文字、不联网、不收集屏幕内容。仅在你点击播放后演奏，可随时暂停、停止或关闭服务。</string>
+    <string name="service_description">按你选择的曲谱，在你校准并绑定的游戏窗口发送触摸手势。读取窗口所属应用用于切出暂停，不读取文字、不截图、不收集屏幕内容。线上曲库会联网下载目录和 MIDI，不上传本地曲谱或设置。仅在你点击播放后演奏；停止并隐藏悬浮窗会保留授权。如需关闭授权，请在此系统页面关闭服务。</string>
     <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:colorAccent">#66E3AC</item>

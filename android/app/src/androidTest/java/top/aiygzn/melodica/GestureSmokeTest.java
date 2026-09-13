@@ -28,9 +28,9 @@ public final class GestureSmokeTest extends Instrumentation {
     private Point size;
     private int rotation;
     private PointF[] points;
-    private boolean onlineOnly, timingOnly;
+    private boolean onlineOnly, timingOnly, permissionsOnly;
     private final StringBuilder report = new StringBuilder();
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); onlineOnly = "online".equals(arguments.getString("suite")); timingOnly = "timing".equals(arguments.getString("suite")); start(); }
+    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); onlineOnly = "online".equals(arguments.getString("suite")); timingOnly = "timing".equals(arguments.getString("suite")); permissionsOnly = "permissions".equals(arguments.getString("suite")); start(); }
     @Override public void onStart() {
         SharedPreferences prefs = getTargetContext().getSharedPreferences("melodica", 0);
         Map<String, ?> previous = new HashMap<>(prefs.getAll());
@@ -39,7 +39,7 @@ public final class GestureSmokeTest extends Instrumentation {
             if (onlineOnly) { new OnlineUiChecks(this, report).run(); }
             else {
             android.app.UiAutomation automation = getUiAutomation(android.app.UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES);
-            startActivitySync(new Intent(getTargetContext(), MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            MainActivity main = (MainActivity) startActivitySync(new Intent(getTargetContext(), MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             // instrumentation 会重启目标进程，系统将原服务记作崩溃；只重连原本已开启的本服务。
             String enabled = android.provider.Settings.Secure.getString(getTargetContext().getContentResolver(), "enabled_accessibility_services");
             if (enabled != null && enabled.contains("top.aiygzn.melodica/")) {
@@ -57,6 +57,8 @@ public final class GestureSmokeTest extends Instrumentation {
             }
             await(() -> MelodicaService.instance != null, 8000, "请先在测试设备开启演奏服务");
             service = MelodicaService.instance;
+            if (permissionsOnly) { permissionChecks(main, automation); }
+            else {
             keyboard = (TouchTestActivity) startActivitySync(new Intent(getTargetContext(), TouchTestActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             SystemClock.sleep(700); waitForIdleSync();
             runOnMainSync(() -> {
@@ -171,6 +173,7 @@ public final class GestureSmokeTest extends Instrumentation {
             await(() -> held() == 0 && !transport().active(), 1000, "离开测试窗口未暂停释放"); pass("切出窗口暂停释放");
             }
             }
+            }
         } catch (Throwable error) {
             code = Activity.RESULT_CANCELED; report.append("失败：").append(error).append('\n');
             android.util.Log.e("MelodicaSmoke", "测试失败", error);
@@ -197,6 +200,72 @@ public final class GestureSmokeTest extends Instrumentation {
         result.putString("stream", "\n" + report); finish(code, result);
     }
     private void calibrate(String target, int direction) { settings.calibrate(target, size.x, size.y, direction, points); }
+    private void permissionChecks(MainActivity main, android.app.UiAutomation automation) throws Exception {
+        String key = android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES;
+        String before = android.provider.Settings.Secure.getString(getTargetContext().getContentResolver(), key);
+        ActivityMonitor settingsMonitor = addMonitor(new android.content.IntentFilter(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS), new ActivityResult(Activity.RESULT_CANCELED, null), true);
+        MainActivity[] page = {main};
+        try {
+            runOnMainSync(() -> {
+                check(page[0].serviceEnabled(), "已开启的授权未识别");
+                service.showPanel(); find(page[0].getWindow().getDecorView(), "停止并隐藏悬浮窗").performClick();
+                check(field(service, "panel") == null && !transport().active() && transport().position(SystemClock.uptimeMillis()) == 0, "日常退出没有停止归零并隐藏");
+                check(MelodicaService.instance == service && page[0].serviceEnabled(), "日常退出关闭了授权");
+            });
+            check(before.equals(android.provider.Settings.Secure.getString(getTargetContext().getContentResolver(), key)), "系统服务开关被改变");
+            pass("停止并隐藏保留系统无障碍开关，停止归零且服务仍连接");
+            SystemClock.sleep(6000); // 等待前一步的系统 Toast 消失，避免遮挡权限截图。
+            saveScreen("permissions-connected-v05.png");
+
+            runOnMainSync(() -> find(page[0].getWindow().getDecorView(), "显示悬浮控制条").performClick());
+            check(field(service, "panel") != null && settingsMonitor.getHits() == 0, "再次显示悬浮窗仍要求授权");
+            runOnMainSync(() -> { service.hidePanel(); page[0].finish(); });
+            await(page[0]::isDestroyed, 2000, "主界面未退出");
+            // 显式 ACTION_MAIN，避免系统设置的 IntentFilter 也匹配没有 action 的启动 Intent。
+            page[0] = (MainActivity) startActivitySync(new Intent(Intent.ACTION_MAIN).setClass(getTargetContext(), MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            runOnMainSync(() -> check(page[0].serviceEnabled() && MelodicaService.instance == service && find(page[0].getWindow().getDecorView(), "管理无障碍授权") != null, "重开应用没有保留授权"));
+            check(settingsMonitor.getHits() == 0, "重开应用重复跳转授权");
+            pass("恢复悬浮窗与退出后重开应用均不重复申请授权");
+
+            // 仅测试界面状态：已授权但系统尚未连接时不能显示为未授权。
+            runOnMainSync(() -> MelodicaService.instance = null);
+            try {
+                await(() -> ((TextView) field(page[0], "serviceStatus")).getText().toString().contains("已授权，等待系统连接"), 1500, "已授权的连接等待被误报为未开启");
+                runOnMainSync(() -> find(page[0].getWindow().getDecorView(), "显示悬浮控制条").performClick());
+                check(settingsMonitor.getHits() == 0, "连接等待时重复跳转授权");
+            } finally { runOnMainSync(() -> MelodicaService.instance = service); }
+            pass("已授权但未连接时显示等待状态，不重复申请");
+            runOnMainSync(() -> find(page[0].getWindow().getDecorView(), "管理无障碍授权").performClick());
+            check(settingsMonitor.getHits() == 1, "管理授权没有进入系统设置入口");
+            pass("管理授权直接使用系统设置入口");
+
+            // 测试主动撤销后的首次申请路径；仅测试包有恢复专用设备设置的能力。
+            runOnMainSync(service::disableSelf);
+            await(() -> MelodicaService.instance == null && !page[0].serviceEnabled() && find(page[0].getWindow().getDecorView(), "开启无障碍服务") != null, 3000, "关闭后授权状态未刷新");
+            SystemClock.sleep(6000);
+            saveScreen("permissions-needed-v05.png");
+            runOnMainSync(() -> find(page[0].getWindow().getDecorView(), "显示悬浮控制条").performClick());
+            SystemClock.sleep(300);
+            android.view.accessibility.AccessibilityNodeInfo root = automation.getRootInActiveWindow();
+            check(root != null, "权限说明弹窗不可见");
+            try {
+                List<android.view.accessibility.AccessibilityNodeInfo> buttons = root.findAccessibilityNodeInfosByText("前往系统设置");
+                check(!buttons.isEmpty(), "缺少权限说明及申请入口");
+                try { check(buttons.get(0).performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK), "权限说明按钮无法点击"); }
+                finally { for (var button : buttons) button.recycle(); }
+            } finally { root.recycle(); }
+            await(() -> settingsMonitor.getHits() == 2, 1500, "未授权时没有按需进入设置");
+            check(!page[0].serviceEnabled(), "应用擅自开启了系统开关");
+            pass("未授权时按需说明并跳转，确认系统授权仍由用户完成");
+        } finally {
+            removeMonitor(settingsMonitor);
+            automation.adoptShellPermissionIdentity("android.permission.WRITE_SECURE_SETTINGS");
+            try { android.provider.Settings.Secure.putString(getTargetContext().getContentResolver(), key, before); }
+            finally { automation.dropShellPermissionIdentity(); }
+            await(() -> MelodicaService.instance != null, 8000, "测试结束未恢复服务");
+            service = MelodicaService.instance;
+        }
+    }
     @SuppressWarnings("unchecked")
     private void measureTiming() {
         for (String score : new String[]{"1 +2 1 -2 1 +2 1 -2 1", "1 0 +2 0 -2 0 1", "1 +#2 -#1 #1 2"}) {

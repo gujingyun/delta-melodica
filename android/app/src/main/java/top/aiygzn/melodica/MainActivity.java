@@ -2,6 +2,8 @@ package top.aiygzn.melodica;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Color;
@@ -37,6 +39,7 @@ public final class MainActivity extends Activity {
     private Score original, selected;
     private Spinner songs, tracks;
     private TextView serviceStatus, songInfo, targetInfo;
+    private Button permissionButton;
     private LinearLayout content;
     private boolean refreshing;
     private final android.os.Handler statusHandler = new android.os.Handler(android.os.Looper.getMainLooper());
@@ -53,11 +56,8 @@ public final class MainActivity extends Activity {
         text(content, "把熟悉的旋律，带进手游。", 14, 0xffa7bebc);
         LinearLayout setup = card("01  连接演奏服务");
         serviceStatus = text(setup, "", 14, Color.WHITE);
-        text(setup, "开启后可显示悬浮控制条，并按曲谱长按音键。仅在你点击播放后工作。", 12, 0xffa7bebc);
-        action(setup, "开启无障碍服务", () -> new AlertDialog.Builder(this).setTitle("开启演奏服务")
-            .setMessage("本工具使用无障碍手势，在你标记的音键位置发送触摸。读取窗口所属应用用于切出暂停；不读取文字、不截图。线上曲库会联网下载目录和 MIDI，不上传本地曲谱或设置。\n\n请在接下来的系统页面找到「三角洲口风琴 · 演奏服务」并手动开启。")
-            .setPositiveButton("前往系统设置", (d, w) -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)))
-            .setNegativeButton("取消", null).show(), false);
+        text(setup, "首次需在系统设置中开启一次。平时停止、隐藏悬浮窗会保留授权，下次直接使用；只有点击播放后才演奏。", 12, 0xffa7bebc);
+        permissionButton = action(setup, "开启无障碍服务", this::requestService, false);
         LinearLayout libraryCard = card("02  选择一首曲目");
         songs = new Spinner(this); libraryCard.addView(songs);
         songInfo = text(libraryCard, "", 13, 0xffa7bebc);
@@ -85,8 +85,11 @@ public final class MainActivity extends Activity {
         text(launch, "进入口风琴演奏画面 → 校准八个音键及半音、升调、自然音、降调 → 播放前确认半音是否选中。首次播放倒计时 3 秒。", 14, Color.WHITE);
         action(launch, "显示悬浮控制条", () -> { if (service()) { prepare(); MelodicaService.instance.showPanel(); toast("已显示，请进入游戏演奏画面"); } }, true);
         action(launch, "打开本地测试键盘", () -> { if (MelodicaService.instance != null) { prepare(); MelodicaService.instance.showPanel(); } startActivity(new Intent(this, TouchTestActivity.class)); }, false);
-        action(launch, "停止并关闭演奏服务", () -> { if (MelodicaService.instance != null) { MelodicaService.instance.stop(); MelodicaService.instance.disableSelf(); } serviceStatus.setText("服务已关闭"); }, false);
-        text(content, "预览版 0.3  ·  Android 8.0+\n线上曲库支持搜索、分页与下载；倒计时和演奏期间禁用收起。已有 12 点校准可继续使用。", 11, 0xff789795);
+        action(launch, "停止并隐藏悬浮窗", () -> {
+            if (MelodicaService.instance != null) { MelodicaService.instance.stop(); MelodicaService.instance.hidePanel(); }
+            updateStatus(); toast(serviceEnabled() ? "已停止并隐藏，保留无障碍授权" : "已停止并隐藏悬浮窗");
+        }, false);
+        text(content, "预览版 0.5  ·  Android 8.0+\n日常停止保留无障碍授权。线上曲库、12 点校准及音区切换优化继续可用；演奏期间禁用收起。", 11, 0xff789795);
         songs.setOnItemSelectedListener(listener(this::selectSong));
         refreshLibrary(); updateStatus();
     }
@@ -100,12 +103,12 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams layout = new LinearLayout.LayoutParams(-1, -2); layout.topMargin = dp(18); content.addView(card, layout);
         TextView label = text(card, title, 12, 0xff66e3ac); label.setTypeface(null, Typeface.BOLD); return card;
     }
-    private void action(LinearLayout parent, String label, Runnable click, boolean primary) {
+    private Button action(LinearLayout parent, String label, Runnable click, boolean primary) {
         Button button = new Button(this); button.setText(label); button.setTextSize(14); button.setAllCaps(false); button.setMinWidth(0); button.setMinimumWidth(0);
         button.setTextColor(primary ? 0xff0d1719 : 0xffd5e9e5);
         GradientDrawable bg = new GradientDrawable(); bg.setColor(primary ? 0xff66e3ac : 0xff263c3e); bg.setCornerRadius(dp(10)); button.setBackground(bg);
         LinearLayout.LayoutParams layout = parent.getOrientation() == LinearLayout.HORIZONTAL ? new LinearLayout.LayoutParams(0, dp(48), 1) : new LinearLayout.LayoutParams(-1, dp(48));
-        layout.topMargin = dp(10); layout.rightMargin = dp(4); parent.addView(button, layout); button.setOnClickListener(v -> click.run());
+        layout.topMargin = dp(10); layout.rightMargin = dp(4); parent.addView(button, layout); button.setOnClickListener(v -> click.run()); return button;
     }
     private interface Select { void run(int index); }
     private AdapterView.OnItemSelectedListener listener(Select select) {
@@ -137,12 +140,41 @@ public final class MainActivity extends Activity {
     }
     private void describe() { if (selected != null) songInfo.setText(selected.notes.size() + " 个旋律音  ·  原曲 " + MelodicaService.time(selected.duration)); }
     private void prepare() { if (selected != null && MelodicaService.instance != null) MelodicaService.instance.load(selected); }
-    private boolean service() { if (MelodicaService.instance != null) return true; toast("请先开启无障碍演奏服务"); return false; }
+    private boolean service() {
+        if (MelodicaService.instance != null) return true;
+        if (serviceEnabled()) toast("已授权，等待系统连接；若长时间未恢复，可进入「管理无障碍授权」检查服务状态");
+        else requestService();
+        return false;
+    }
+    boolean serviceEnabled() {
+        // 已授权但服务尚未绑定时，不能把它误报为没有权限。
+        String enabled = Settings.Secure.getString(getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        if (enabled == null) return false;
+        ComponentName own = new ComponentName(this, MelodicaService.class);
+        for (String name : enabled.split(":")) if (own.equals(ComponentName.unflattenFromString(name))) return true;
+        return false;
+    }
+    private void requestService() {
+        if (serviceEnabled()) { openAccessibilitySettings(); return; }
+        new AlertDialog.Builder(this).setTitle("开启演奏服务")
+            .setMessage("本工具使用无障碍手势，在你标记的音键位置发送触摸。读取窗口所属应用用于切出暂停；不读取文字、不截图。线上曲库会联网下载目录和 MIDI，不上传本地曲谱或设置。\n\n请在系统页面找到「三角洲口风琴 · 演奏服务」并开启。首次必须由你确认；之后使用「停止并隐藏悬浮窗」可保留授权，无需每次重新开启。")
+            .setPositiveButton("前往系统设置", (d, w) -> openAccessibilitySettings())
+            .setNegativeButton("取消", null).show();
+    }
+    private void openAccessibilitySettings() {
+        try { startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)); }
+        catch (ActivityNotFoundException | SecurityException e) { toast("系统未提供跳转入口，请在手机设置的无障碍页面开启演奏服务"); }
+    }
     private void toast(String text) { android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_LONG).show(); }
-    @Override protected void onResume() { super.onResume(); if (settings != null) { statusHandler.removeCallbacks(refreshStatus); statusHandler.post(refreshStatus); } }
+    @Override protected void onResume() { super.onResume(); if (settings != null) { updateStatus(); statusHandler.removeCallbacks(refreshStatus); statusHandler.postDelayed(refreshStatus, 700); } }
     @Override protected void onPause() { statusHandler.removeCallbacks(refreshStatus); super.onPause(); }
     private void updateStatus() {
-        serviceStatus.setText(MelodicaService.instance != null ? "●  演奏服务已连接" : "○  演奏服务未开启");
+        boolean enabled = serviceEnabled();
+        String state = MelodicaService.instance != null ? "●  演奏服务已连接 · 授权已保留"
+            : enabled ? "◐  已授权，等待系统连接；无需重复申请" : "○  未授权，请先开启无障碍服务";
+        if (!state.contentEquals(serviceStatus.getText())) serviceStatus.setText(state);
+        String label = enabled ? "管理无障碍授权" : "开启无障碍服务";
+        if (!label.contentEquals(permissionButton.getText())) permissionButton.setText(label);
         targetInfo.setText(!settings.calibrated() ? "需要重新校准：八个音键 + 四个变音按钮" : "已绑定：" + settings.target() + "\n12 点校准画面：" + settings.width() + " × " + settings.height());
     }
     private void mappingDialog() {
