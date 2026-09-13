@@ -1,6 +1,6 @@
 # 账号与私有云端曲库
 
-账号 API 与静态官网、Windows Tkinter、安卓界面分开运行。保留原有 3002 端口统计服务，新增 3003 端口账号服务。Python 3.13；客户端无需安装后端依赖。
+账号 API 与静态官网、客户端界面分开运行。保留原有 3002 端口统计服务，新增 3003 端口账号服务。Python 3.13；客户端无需安装后端依赖。
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r server\requirements-test.txt
@@ -47,3 +47,9 @@
 SQLite 采用默认回滚日志与短事务，密码计算、网络请求均在事务外完成。SQLite 的写入串行，适合初期单机服务。备份使用 Python `sqlite3.Connection.backup()`，同时安全备份 `otp-secret` 和环境配置；不要在运行中直接复制数据库文件。恢复前停止账号服务，恢复后核对文件权限及 `/health`，再恢复服务。
 
 安全设计参考：[OWASP 密码存储](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)、[会话管理](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)、[SQLite 适用范围](https://www.sqlite.org/whentouse.html)。
+
+## 浏览器与桌面联调
+
+桌面账号回归：`python -m unittest -v test_accounts test_account_client`（Windows，含 Tk 窗口测试）。浏览器测试先在仓库根目录运行 `python server/test_web_server.py`，然后在另一终端执行 `npm --prefix website install` 和 `npm --prefix website run test:accounts`，需要本机 Chrome。也可用环境变量 `PLAYWRIGHT_MODULE` 指向已安装的 Playwright 模块目录。
+
+浏览器脚本访问本机 `127.0.0.1:8767`，使用虚构邮箱，不发送真实邮件。临时数据库由测试服务退出时清理，测试截图与假邮件位于忽略目录 `work/accounts-web/`。这个测试服务放宽验证码发送间隔，仅供联调，绝不能用于生产。正式服务仍使用 `server.accounts:create_app`。

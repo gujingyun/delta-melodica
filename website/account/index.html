@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>我的曲库 · 三角洲口风琴</title>
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="stylesheet" href="account.css">
+  <script defer src="account.js"></script>
+</head>
+<body>
+<header class="site-header container"><a class="brand" href="../"><span class="brand-mark">♫</span><strong>三角洲口风琴</strong></a><a class="text-link" href="../">返回首页 ↗</a></header>
+<main class="container account-layout">
+  <section class="account-intro"><p class="eyebrow">YOUR MUSIC, EVERYWHERE</p><h1>旋律随身，<br><em>曲库随行。</em></h1>
+    <p>一个账号，连接客户端和网页曲库。<br>游客也能继续使用客户端的本地导入、试听和演奏。</p>
+    <div class="account-facts"><span>邮箱验证</span><span>私有云端曲库</span><span>游客曲谱继承</span></div>
+    <p class="muted">注册后，当前设备的游客曲谱自动归入你的账号。各设备已有曲谱需要从对应客户端注册或登录后合并。</p>
+  </section>
+  <section class="account-card" aria-label="账号管理">
+    <div id="guest-auth">
+      <div class="account-tabs" role="group" aria-label="账号操作"><button type="button" data-mode="login" aria-pressed="true">登录</button><button type="button" data-mode="register" aria-pressed="false">注册</button><button type="button" data-mode="reset" aria-pressed="false">找回密码</button></div>
+      <form id="auth-form">
+        <label for="email">邮箱地址</label><input id="email" type="email" autocomplete="email" maxlength="254" required placeholder="你的邮箱">
+        <label id="password-label" for="password">密码</label><input id="password" type="password" autocomplete="current-password" minlength="10" maxlength="128" required placeholder="10～128 个字符">
+        <div id="code-fields" hidden><label for="code">邮箱验证码</label><div class="code-row"><input id="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="6 位验证码"><button id="send-code" type="button">发送验证码</button></div></div>
+        <p id="register-note" class="muted" hidden>注册会将此浏览器保存的游客曲谱加入账号并上传到私有云端。</p>
+        <button class="button button-primary wide" id="submit-auth" type="submit">登录</button>
+      </form>
+    </div>
+    <div id="signed-in" hidden><p class="eyebrow">MY ACCOUNT</p><h2 id="account-email"></h2><p>邮箱已验证 · 多设备共用账号</p><button id="logout" type="button">退出登录，使用游客模式</button></div>
+    <p id="status" role="status" aria-live="polite">正在读取账号状态…</p>
+  </section>
+  <section class="account-card library-card">
+    <div class="library-heading"><div><p class="eyebrow">MY LIBRARY</p><h2 id="library-title">游客曲库</h2></div><div class="library-actions"><button id="sync" type="button">同步云端曲库</button><button id="merge" type="button" hidden>合并游客曲谱</button><label class="file-label" for="import-score">导入曲谱备份<input id="import-score" type="file" accept=".json,application/json" hidden></label></div></div>
+    <p class="muted">支持导入从本页下载的曲谱备份 JSON。MIDI 和文本简谱请在客户端导入。游客曲谱仅保存在此浏览器，清除网站数据会移除；请及时下载备份。</p>
+    <ul id="song-list" class="song-list"></ul>
+    <p id="empty-library">还没有曲谱。在客户端导入并同步，或在这里导入曲谱备份。</p>
+  </section>
+</main>
+</body>
+</html>

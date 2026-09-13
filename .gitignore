@@ -20,3 +20,4 @@ android/local.properties
 server/.env
 server/*.env
 otp-secret
+node_modules/
