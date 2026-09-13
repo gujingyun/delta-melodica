@@ -12,7 +12,7 @@
 
 ## 发信与部署
 
-2026-09-13 已部署至阿里云现有服务器：[账号页面](https://aiygzn.top/melodica/account/)、[服务健康检查](https://aiygzn.top/melodica/account-api/health)。服务由 `delta-melodica-accounts.service` 管理并设置开机启动，仅监听 `127.0.0.1:3003`。SMTP TLS 连接及认证通过；真实邮件与账号流程结果见[验证记录](../验证记录.md)。网站原入口与 Nginx 配置备份位于 `/var/backups/delta-melodica/accounts.XIXVd4mr`。
+2026-09-13 已部署至阿里云现有服务器：[账号页面](https://aiygzn.top/melodica/account/)、[服务健康检查](https://aiygzn.top/melodica/account-api/health)。服务由 `delta-melodica-accounts.service` 管理并设置开机启动，仅监听 `127.0.0.1:3003`。真实邮件注册、找回密码、重置撤销旧会话及原生令牌／网页 Cookie 会话曲库互通均已通过线上 HTTPS 验证，结果见[验证记录](../验证记录.md)。网站原入口与 Nginx 配置备份位于 `/var/backups/delta-melodica/accounts.XIXVd4mr`。
 
 1. 为 `aiygzn.top` 配置独立发信子域名，按供应商控制台配置域名验证、SPF、DKIM 和 DMARC。可选择阿里云邮件推送或 Resend。
 2. 参照 `account.env.example`，在服务器环境中填写 SMTP 主机、端口、用户、密码、发件地址。当前使用阿里云华东 1（杭州），发信地址 `no-reply@mail.aiygzn.top`，触发邮件类型；发信域名的 SPF、2048 位 DKIM、DMARC、MX 已在控制台验证通过。465 使用 `SMTP_TLS=ssl`，587 使用 `SMTP_TLS=starttls`。始终校验 TLS 证书，不支持明文 SMTP。密码只保存在服务器受限环境文件中。
