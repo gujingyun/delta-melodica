@@ -32,14 +32,14 @@ from account_client import AccountClient
 from account_ui import AccountPanel
 from cloud_score import to_song
 
-BG = "#11191d"
-CARD = "#1b272d"
-DEEP = "#152126"
-TEXT = "#e9f0ec"
-MUTED = "#96a9aa"
-ACCENT = "#b7f17c"
-LINE = "#304249"
-ORANGE = "#f1c077"
+BG = "#101413"
+CARD = "#191f1c"
+DEEP = "#121815"
+TEXT = "#edf2e9"
+MUTED = "#a0aea4"
+ACCENT = "#c1f17c"
+LINE = "#303b33"
+ORANGE = "#e9bb7b"
 PLAY_STYLES = {"钢琴适配 · 连奏": "piano", "原谱 · 分音": "original"}
 SPEEDS = ["0.25", "0.50", "0.75", "1.00", "1.25", "1.50", "1.75", "2.00"]
 APP_VERSION = "0.13"
@@ -225,8 +225,8 @@ class App:
     def _build(self):
         root = self.root
         root.title(f"三角洲口风琴 v{APP_VERSION} · MIDI 自动演奏")
-        root.geometry("1120x850")
-        root.minsize(1000, 830)
+        root.geometry("1180x840")
+        root.minsize(1040, 780)
         root.configure(bg=BG)
         root.option_add("*Font", ("Microsoft YaHei UI", 10))
         style = ttk.Style()
@@ -234,77 +234,94 @@ class App:
         style.configure("TFrame", background=BG)
         style.configure("Card.TFrame", background=CARD)
         style.configure("TLabel", background=CARD, foreground=TEXT)
-        style.configure("TButton", background=LINE, foreground=TEXT, borderwidth=0, padding=(14, 10), font=("Microsoft YaHei UI", 10))
-        style.map("TButton", background=[("active", "#41575d"), ("disabled", "#25343a")], foreground=[("disabled", "#64777c")])
+        style.configure("TButton", background=LINE, foreground=TEXT, borderwidth=0, padding=(14, 9), font=("Microsoft YaHei UI", 10), focuscolor=ACCENT)
+        style.map("TButton", background=[("active", "#435344"), ("disabled", "#242d27")], foreground=[("disabled", "#859288")])
         style.configure("Accent.TButton", background=ACCENT, foreground=BG, font=("Microsoft YaHei UI", 10, "bold"))
         style.map("Accent.TButton", background=[("active", "#d3ffaa"), ("disabled", "#50663f")], foreground=[("disabled", "#a1b098")])
-        style.configure("TCombobox", fieldbackground=DEEP, background=LINE, foreground=TEXT, arrowcolor=TEXT, padding=7)
+        style.configure("Quiet.TButton", background=CARD, foreground=MUTED, padding=(12, 7))
+        style.map("Quiet.TButton", background=[("disabled", CARD), ("active", LINE)], foreground=[("disabled", "#718075"), ("active", TEXT)])
+        style.configure("TCombobox", fieldbackground=DEEP, background=LINE, foreground=TEXT, arrowcolor=MUTED, padding=7, bordercolor=LINE, lightcolor=LINE, darkcolor=LINE)
         style.map("TCombobox", fieldbackground=[("readonly", DEEP)], foreground=[("readonly", TEXT)])
-        style.configure("TEntry", fieldbackground=DEEP, foreground=TEXT, padding=7, insertcolor=TEXT)
+        style.configure("TEntry", fieldbackground=DEEP, foreground=TEXT, padding=7, insertcolor=TEXT, bordercolor=LINE, lightcolor=LINE, darkcolor=LINE)
+        style.configure("TRadiobutton", background=BG, foreground=TEXT, indicatorcolor=DEEP, focuscolor=ACCENT)
+        style.map("TRadiobutton", background=[("active", BG)], indicatorcolor=[("selected", ACCENT)])
+        style.configure("Vertical.TScrollbar", background=LINE, troughcolor=CARD, borderwidth=0, bordercolor=CARD, lightcolor=LINE, darkcolor=LINE, arrowcolor=MUTED, arrowsize=10)
         style.configure("Horizontal.TProgressbar", background=ACCENT, troughcolor=LINE, borderwidth=0, thickness=4)
         root.option_add("*TCombobox*Listbox.background", CARD)
         root.option_add("*TCombobox*Listbox.foreground", TEXT)
         header = tk.Frame(root, bg=BG)
-        header.pack(fill="x", padx=28, pady=(16, 14))
+        header.pack(fill="x", padx=24, pady=(20, 20))
+        mark = tk.Canvas(header, width=44, height=44, bg=ACCENT, highlightthickness=0)
+        mark.pack(side="left", padx=(0, 14))
+        for index, height in enumerate((12, 24, 30, 18)):
+            mark.create_rectangle(10+index*7, 22-height/2, 14+index*7, 22+height/2, fill=BG, outline="")
         left = tk.Frame(header, bg=BG)
         left.pack(side="left")
-        tk.Label(left, text="三角洲口风琴", font=("Microsoft YaHei UI", 22, "bold"), fg=TEXT, bg=BG).pack(anchor="w")
-        tk.Label(left, text="MELODICA  /  让旋律进入游戏", font=("Microsoft YaHei UI", 10), fg=MUTED, bg=BG).pack(anchor="w", pady=(3, 0))
-        settings = ttk.Button(header, text="键位与设置", command=self.settings_dialog)
+        tk.Label(left, text="三角洲口风琴", font=("Microsoft YaHei UI", 18, "bold"), fg=TEXT, bg=BG).pack(anchor="w")
+        tk.Label(left, text="D E L T A  M E L O D I C A   /   让旋律进入游戏", font=("Microsoft YaHei UI", 8), fg=MUTED, bg=BG).pack(anchor="w", pady=(2, 0))
+        settings = ttk.Button(header, text="键位与设置", style="Quiet.TButton", command=self.settings_dialog)
         settings.pack(side="right")
         self.locked_widgets.append(settings)
-        self.update_button = ttk.Button(header, text="检查更新", command=self.check_updates)
+        self.update_button = ttk.Button(header, text="检查更新", style="Quiet.TButton", command=self.check_updates)
         self.update_button.pack(side="right", padx=(0, 12))
-        ttk.Button(header, text="悬浮窗操作  F7", command=lambda: self.overlay.begin_edit()).pack(side="right", padx=(0, 12))
+        ttk.Button(header, text="悬浮窗操作  F7", style="Quiet.TButton", command=lambda: self.overlay.begin_edit()).pack(side="right", padx=(0, 8))
         if self.elevated is not True:
             self.admin_button = ttk.Button(header, text="以管理员身份重启", command=self.elevate)
             self.admin_button.pack(side="right", padx=(0, 12))
             self.locked_widgets.append(self.admin_button)
-        tk.Label(header, text=f"v{APP_VERSION} · " + ("管理员权限" if self.elevated else "普通权限"), fg=ACCENT, bg=BG).pack(side="right", padx=16)
+        tk.Label(header, text=f"v{APP_VERSION}", fg=MUTED, bg=BG, font=("Consolas", 10)).pack(side="right", padx=12)
 
         body = tk.Frame(root, bg=BG)
-        body.pack(fill="both", expand=True, padx=28)
-        sidebar = tk.Frame(body, bg=CARD, width=250)
-        sidebar.pack(side="left", fill="y", padx=(0, 18))
+        body.pack(fill="both", expand=True, padx=24)
+        sidebar = tk.Frame(body, bg=CARD, width=244, highlightbackground=LINE, highlightthickness=1)
+        sidebar.pack(side="left", fill="y", padx=(0, 16))
         sidebar.pack_propagate(False)
-        tk.Label(sidebar, text="我的曲库", bg=CARD, fg=TEXT, font=("Microsoft YaHei UI", 13, "bold")).pack(anchor="w", padx=18, pady=(20, 6))
+        tk.Label(sidebar, text="LIBRARY  /  我的曲库", bg=CARD, fg=TEXT, font=("Microsoft YaHei UI", 11, "bold")).pack(anchor="w", padx=18, pady=(20, 6))
         tk.Label(sidebar, textvariable=self.account_ui.caption, bg=CARD, fg=MUTED,
                  wraplength=220).pack(anchor="w", padx=18, pady=(0, 8))
-        ttk.Button(sidebar, text="账号 / 云端同步", command=self.account_ui.show).pack(fill="x", padx=18, pady=(0, 10))
-        self.library = tk.Listbox(sidebar, bg=CARD, fg=TEXT, selectbackground="#354a38", selectforeground=ACCENT,
-                                  highlightthickness=0, bd=0, activestyle="none", exportselection=False,
-                                  font=("Microsoft YaHei UI", 11), height=10)
-        self.library.pack(fill="both", expand=True, padx=12)
+        ttk.Button(sidebar, text="账号 / 云端同步   ↗", style="Quiet.TButton", command=self.account_ui.show).pack(fill="x", padx=18, pady=(0, 16))
+        tk.Frame(sidebar, bg=LINE, height=1).pack(fill="x", padx=18, pady=(0, 12))
+        library_frame = tk.Frame(sidebar, bg=CARD)
+        library_frame.pack(fill="both", expand=True, padx=(14, 8), pady=(0, 18))
+        self.library = tk.Listbox(library_frame, bg=CARD, fg=TEXT, selectbackground="#35472b", selectforeground=ACCENT,
+                                  highlightthickness=1, highlightbackground=CARD, highlightcolor=ACCENT, bd=0,
+                                  activestyle="none", exportselection=False,
+                                  font=("Microsoft YaHei UI", 12), height=8, width=18)
+        library_scroll = ttk.Scrollbar(library_frame, orient="vertical", command=self.library.yview)
+        library_scroll.pack(side="right", fill="y")
+        self.library.configure(yscrollcommand=library_scroll.set)
+        self.library.pack(side="left", fill="both", expand=True)
         self.library.bind("<<ListboxSelect>>", self.select_song)
         self.locked_widgets.append(self.library)
         for text, command in (("＋  导入 MIDI", self.import_midi), ("＋  输入简谱", self.score_dialog)):
-            button = ttk.Button(sidebar, text=text, command=command)
-            button.pack(fill="x", padx=18, pady=(0, 12))
+            button = ttk.Button(sidebar, text=text, command=command, style="Accent.TButton" if command == self.import_midi else "TButton")
+            button.pack(fill="x", padx=18, pady=(0, 8))
             self.locked_widgets.append(button)
-        self.online_button = ttk.Button(sidebar, text="☁  线上曲库", command=self.online_library_dialog)
-        self.online_button.pack(fill="x", padx=18, pady=(0, 12))
+        self.online_button = ttk.Button(sidebar, text="线上曲库   ↗", command=self.online_library_dialog)
+        self.online_button.pack(fill="x", padx=18, pady=(0, 8))
         self.locked_widgets.append(self.online_button)
-        self.delete_button = ttk.Button(sidebar, text="删除选中曲目", command=self.delete_song)
-        self.delete_button.pack(fill="x", padx=18, pady=(0, 12))
+        self.delete_button = ttk.Button(sidebar, text="删除选中曲目", style="Quiet.TButton", command=self.delete_song)
+        self.delete_button.pack(fill="x", padx=18, pady=(0, 8))
         self.locked_widgets.append(self.delete_button)
         tk.Label(sidebar, text="支持 .mid / .midi\n多音轨可单独选择旋律", justify="left", bg=CARD, fg=MUTED, font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=18, pady=(0, 20))
 
         content = tk.Frame(body, bg=BG)
         content.pack(side="left", fill="both", expand=True)
-        track_card = tk.Frame(content, bg=CARD)
+        track_card = tk.Frame(content, bg=CARD, highlightbackground=LINE, highlightthickness=1)
         track_card.pack(fill="x")
-        tk.Label(track_card, text="当前曲目", bg=CARD, fg=ACCENT, font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=22, pady=(10, 4))
-        tk.Label(track_card, textvariable=self.title, bg=CARD, fg=TEXT, font=("Microsoft YaHei UI", 20, "bold"), anchor="w").pack(fill="x", padx=22)
+        tk.Label(track_card, text="NOW PLAYING  /  当前曲目", bg=CARD, fg=ACCENT, font=("Microsoft YaHei UI", 8, "bold")).pack(anchor="w", padx=22, pady=(16, 5))
+        tk.Label(track_card, textvariable=self.title, bg=CARD, fg=TEXT, font=("Microsoft YaHei UI", 23, "bold"), anchor="w").pack(fill="x", padx=22)
         tk.Label(track_card, textvariable=self.subtitle, bg=CARD, fg=MUTED, anchor="w").pack(fill="x", padx=22, pady=(3, 6))
         fields = tk.Frame(track_card, bg=CARD)
         fields.pack(fill="x", padx=22, pady=(0, 8))
         for column, (label, variable, values, width) in enumerate([
-            ("演奏音轨", self.track, [], 26),
-            ("速度倍率", self.speed, SPEEDS, 8),
-            ("移调 / 半音", self.transpose, list(range(-24, 25)), 7),
+            ("演奏音轨", self.track, [], 18),
+            ("速度倍率", self.speed, SPEEDS, 6),
+            ("移调 / 半音", self.transpose, list(range(-24, 25)), 6),
+            ("演奏方式", self.arrangement, list(PLAY_STYLES), 16),
         ]):
             frame = tk.Frame(fields, bg=CARD)
-            frame.grid(row=0, column=column, sticky="ew", padx=(0, 14 if column < 2 else 0))
+            frame.grid(row=0, column=column, sticky="ew", padx=(0, 12 if column < 3 else 0))
             tk.Label(frame, text=label, bg=CARD, fg=MUTED, font=("Microsoft YaHei UI", 9)).pack(anchor="w", pady=(0, 6))
             combo = ttk.Combobox(frame, textvariable=variable, values=values, width=width, state="readonly")
             combo.pack(fill="x")
@@ -313,23 +330,16 @@ class App:
                 self.locked_widgets.append(combo)
                 self.track_combo = combo
                 fields.columnconfigure(0, weight=1)
-            else:
+            elif column < 3:
                 combo.bind("<<ComboboxSelected>>", lambda event: self.rebuild_plan(preserve_position=True))
                 if column == 1:
                     self.speed_combo = combo
                 else:
                     self.transpose_combo = combo
-
-        adaptation = tk.Frame(track_card, bg=CARD)
-        adaptation.pack(fill="x", padx=22, pady=(0, 10))
-        tk.Label(adaptation, text="演奏方式", bg=CARD, fg=MUTED).pack(side="left", padx=(0, 12))
-        self.style_combo = ttk.Combobox(adaptation, textvariable=self.arrangement,
-                                       values=list(PLAY_STYLES), state="readonly", width=18)
-        self.style_combo.pack(side="left")
-        self.style_combo.bind("<<ComboboxSelected>>", lambda event: self.rebuild_plan())
-        self.locked_widgets.append(self.style_combo)
-        tk.Label(adaptation, text="连奏：整理伴奏碎音，连接短间隙", bg=CARD, fg=MUTED,
-                 font=("Microsoft YaHei UI", 9)).pack(side="left", padx=(14, 0))
+            else:
+                self.style_combo = combo
+                combo.bind("<<ComboboxSelected>>", lambda event: self.rebuild_plan())
+                self.locked_widgets.append(combo)
 
         segments = tk.Frame(track_card, bg=CARD)
         segments.pack(fill="x", padx=22, pady=(0, 10))
@@ -339,8 +349,8 @@ class App:
         tk.Label(segments, textvariable=self.segment_summary, bg=CARD, fg=ACCENT,
                  font=("Microsoft YaHei UI", 9), anchor="w").pack(side="left", fill="x", expand=True)
 
-        score_card = tk.Frame(content, bg=CARD)
-        score_card.pack(fill="both", expand=True, pady=(16, 0))
+        score_card = tk.Frame(content, bg=CARD, highlightbackground=LINE, highlightthickness=1)
+        score_card.pack(fill="both", expand=True, pady=(12, 0))
         score_top = tk.Frame(score_card, bg=CARD)
         score_top.pack(fill="x", padx=22, pady=(12, 6))
         tk.Label(score_top, textvariable=self.preview_title, bg=CARD, fg=TEXT, font=("Microsoft YaHei UI", 12, "bold")).pack(side="left")
@@ -348,7 +358,7 @@ class App:
         self.roll = tk.Canvas(score_card, bg=DEEP, highlightthickness=0, height=70)
         self.roll.pack(fill="both", expand=True, padx=22)
         self.roll.bind("<Configure>", lambda event: self.draw_roll())
-        style.configure("Horizontal.TScale", background=ACCENT, troughcolor=LINE)
+        style.configure("Horizontal.TScale", background=ACCENT, troughcolor=DEEP, bordercolor=LINE, borderwidth=0, sliderlength=14, lightcolor=LINE, darkcolor=LINE)
         self.progress = ttk.Scale(score_card, from_=0, to=100, value=0, cursor="hand2")
         self.progress.pack(fill="x", padx=22, pady=(12, 10))
         self.progress.bind("<ButtonPress-1>", self._seek_press)
@@ -360,8 +370,8 @@ class App:
         self.progress.bind("<End>", lambda event: self._seek_key(to_end=True))
         stats_label = tk.Label(score_card, textvariable=self.stats, bg=CARD, fg=MUTED, font=("Microsoft YaHei UI", 9), anchor="w")
         stats_label.pack(fill="x", padx=22)
-        self.keys_canvas = tk.Canvas(score_card, height=73, bg=CARD, highlightthickness=0)
-        self.keys_canvas.pack(fill="x", padx=22, pady=(4, 6))
+        self.keys_canvas = tk.Canvas(score_card, height=65, bg=CARD, highlightthickness=0)
+        self.keys_canvas.pack(fill="x", padx=22, pady=(8, 10))
         self.keys_canvas.bind("<Configure>", lambda event: self.draw_keys())
         self.keys_canvas.pack_configure(side="bottom", before=self.roll)
         stats_label.pack_configure(side="bottom", before=self.roll)
@@ -380,7 +390,7 @@ class App:
         tk.Label(status_card, textvariable=self.status, bg=BG, fg=ACCENT, anchor="w", font=("Microsoft YaHei UI", 11, "bold")).pack(fill="x")
         tk.Label(status_card, textvariable=self.detail, bg=BG, fg=MUTED, anchor="w", justify="left", wraplength=670, font=("Microsoft YaHei UI", 9)).pack(fill="x", pady=(4, 0))
         bottom = tk.Frame(root, bg=BG)
-        bottom.pack(fill="x", padx=28, pady=(10, 0))
+        bottom.pack(fill="x", padx=24, pady=(12, 0))
         tk.Label(bottom, textvariable=self.hotkey_status, bg=BG, fg=MUTED, font=("Microsoft YaHei UI", 9)).pack(side="left")
         self.overlay_button = ttk.Button(bottom, textvariable=self.overlay_button_text,
                                          command=lambda: self.overlay.toggle_visibility(), padding=(8, 3))
@@ -391,7 +401,7 @@ class App:
         log_button.bind("<Button-1>", lambda event: self.show_log())
         self.footer = tk.Label(root, text="F4/F5 音调 −/+　F10/F11 速度 −/+　F6 显隐　F7 操作　F8 暂停/继续　F9 停止归零　｜　关闭后从托盘退出",
                  bg=BG, fg=MUTED, justify="left", font=("Microsoft YaHei UI", 9))
-        self.footer.pack(anchor="w", padx=28, pady=(5, 10))
+        self.footer.pack(anchor="w", padx=24, pady=(5, 10))
         # 先为底部操作与提示留出空间，窗口变小时由旋律画布缩小。
         self.footer.pack_configure(side="bottom", before=body)
         bottom.pack_configure(side="bottom", before=body)
@@ -1564,9 +1574,10 @@ class App:
         for index, key in enumerate(keys):
             x = index*(key_width+6)
             active = self.current_note and self.current_note.fingering.key == key
-            canvas.create_rectangle(x, 4, x+key_width, 71, fill=ACCENT if active else "#26363d", outline="")
-            canvas.create_text(x+key_width/2, 27, text=key.upper(), fill=BG if active else TEXT, font=("Consolas", 17, "bold"))
-            canvas.create_text(x+key_width/2, 57, text=str(index+1) if index < 7 else "高音 1", fill=BG if active else MUTED, font=("Microsoft YaHei UI", 9))
+            canvas.create_rectangle(x+1, 2, x+key_width-1, 64, fill=ACCENT if active else DEEP, outline=ACCENT if active else LINE)
+            canvas.create_line(x+8, 62, x+key_width-8, 62, fill=ACCENT if active else "#506246", width=2)
+            canvas.create_text(x+key_width/2, 23, text=key.upper(), fill=BG if active else TEXT, font=("Consolas", 16, "bold"))
+            canvas.create_text(x+key_width/2, 48, text=str(index+1) if index < 7 else "高音 1", fill=BG if active else MUTED, font=("Microsoft YaHei UI", 8))
 
     def draw_roll(self, elapsed=None):
         canvas = self.roll
@@ -1589,7 +1600,7 @@ class App:
         for second in range(int(left), int(left+span)+1):
             x = 40+(second-left)/span*(width-45)
             if x >= 40:
-                canvas.create_line(x, 0, x, height, fill="#1e3037")
+                canvas.create_line(x, 0, x, height, fill="#253028")
         for note in self.plan.notes:
             if note.end < left:
                 continue
@@ -1597,7 +1608,7 @@ class App:
                 break
             x1 = 40+(max(note.start, left)-left)/span*(width-45)
             x2 = min(width-5, 40+(note.end-left)/span*(width-45))
-            fill = ACCENT if note.start <= elapsed < note.end else "#638b75"
+            fill = ACCENT if note.start <= elapsed < note.end else "#779860"
             canvas.create_rectangle(x1, y(note.fingering.pitch)-4, max(x1+2, x2-2), y(note.fingering.pitch)+4, fill=fill, outline="")
         cursor = 40+(elapsed-left)/span*(width-45)
         canvas.create_line(cursor, 0, cursor, height, fill=ORANGE, width=2)

@@ -89,6 +89,22 @@ class LifecycleTests(unittest.TestCase):
         self.assertFalse(tray.thread.is_alive())
         self.assertFalse(tray.available)
 
+    def test_main_layout_keeps_preview_and_controls_visible(self):
+        """默认和最小窗口均保留旋律空间，参数和停止入口不会被挤出。"""
+        for size in ("1180x840", "1040x780"):
+            with self.subTest(size=size):
+                self.root.geometry(size)
+                self.root.update()
+                self.assertGreaterEqual(self.app.roll.winfo_height(), 40)
+                for widget in (self.app.track_combo, self.app.speed_combo,
+                               self.app.transpose_combo, self.app.style_combo,
+                               self.app.play_button, self.app.stop_button, self.app.footer):
+                    self.assertTrue(widget.winfo_ismapped())
+                    right = widget.winfo_rootx() + widget.winfo_width()
+                    bottom = widget.winfo_rooty() + widget.winfo_height()
+                    self.assertLessEqual(right, self.root.winfo_rootx() + self.root.winfo_width())
+                    self.assertLessEqual(bottom, self.root.winfo_rooty() + self.root.winfo_height())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
