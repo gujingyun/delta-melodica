@@ -12,12 +12,14 @@
 
 ## 发信与部署
 
+2026-09-13 已部署至阿里云现有服务器：[账号页面](https://aiygzn.top/melodica/account/)、[服务健康检查](https://aiygzn.top/melodica/account-api/health)。服务由 `delta-melodica-accounts.service` 管理并设置开机启动，仅监听 `127.0.0.1:3003`。SMTP TLS 连接及认证通过；真实邮件与账号流程结果见[验证记录](../验证记录.md)。网站原入口与 Nginx 配置备份位于 `/var/backups/delta-melodica/accounts.XIXVd4mr`。
+
 1. 为 `aiygzn.top` 配置独立发信子域名，按供应商控制台配置域名验证、SPF、DKIM 和 DMARC。可选择阿里云邮件推送或 Resend。
 2. 参照 `account.env.example`，在服务器环境中填写 SMTP 主机、端口、用户、密码、发件地址。当前使用阿里云华东 1（杭州），发信地址 `no-reply@mail.aiygzn.top`，触发邮件类型；发信域名的 SPF、2048 位 DKIM、DMARC、MX 已在控制台验证通过。465 使用 `SMTP_TLS=ssl`，587 使用 `SMTP_TLS=starttls`。始终校验 TLS 证书，不支持明文 SMTP。密码只保存在服务器受限环境文件中。
 3. 将仓库及后端依赖安装到 `/opt/delta-melodica`，创建专用系统用户 `melodica-accounts` 与数据目录 `/var/lib/delta-melodica-accounts`。数据目录权限 0700，环境文件权限 0600；不要置于网站静态目录。
 4. 安装 `delta-melodica-accounts.service`。Nginx 将 `/melodica/account-api/` 反代到 `127.0.0.1:3003/`，账号路由使用 HTTPS、`client_max_body_size 2m`，关闭访问日志，不对外暴露后端端口。
 5. 生产 `MELODICA_ORIGIN=https://aiygzn.top`。仅在本机 HTTP 联调时设 `MELODICA_DEV_HTTP=1` 并配置对应 Origin；生产不得开启。
-6. 实际上线前验证注册及重置验证码到达测试邮箱、垃圾邮件分类、重置后旧会话失效、三端互通。SMTP 可连接并不代表真实投递已验证。
+6. 部署后验证注册及重置验证码到达测试邮箱、垃圾邮件分类、重置后旧会话失效、三端互通。SMTP 可连接或认证成功并不代表真实投递已验证。
 
 生产依赖固定在 `requirements.lock`（包含传递依赖及 SHA-256 校验值），使用 `pip install --require-hashes -r server/requirements.lock` 或 `uv pip sync --require-hashes server/requirements.lock` 安装。服务器自带 Python 3.6，账号服务使用单独安装的 Python 3.13.15，目录 `/opt/delta-melodica-python`，项目虚拟环境位于 `/opt/delta-melodica/.venv`。系统 Python 和统计服务继续使用原环境。运行环境由 [uv 官方安装方式](https://docs.astral.sh/uv/guides/install-python/) 安装，后续补丁升级需重新运行账号回归测试。
 
