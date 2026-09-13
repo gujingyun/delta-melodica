@@ -18,11 +18,13 @@ class SongSettingsTests(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
         self.root = tk.Tk()
+        self.scaling = self.root.tk.call("tk", "scaling")
         self.app = App(self.root, self.folder.name, smoke=True)
         self.app.overlay.enabled = False
         self.root.update()
 
     def tearDown(self):
+        self.root.tk.call("tk", "scaling", self.scaling)
         self.app.close()
         self.app = self.root = None
         gc.collect()
@@ -86,30 +88,96 @@ class SongSettingsTests(unittest.TestCase):
     def test_score_dialog_save_stays_visible_and_selects_new_song(self):
         for scaling in (4 / 3, 2, 8 / 3):
             self.root.tk.call("tk", "scaling", scaling)
+            original_source, original_song = self.app.current_source, self.app.song
             self.app.score_dialog()
-            dialog = self.root.grab_current()
-            editor = next(child for child in dialog.winfo_children() if isinstance(child, tk.Text))
-            save = next(child for child in dialog.winfo_children()
-                        if isinstance(child, ttk.Button) and child.cget("text") == "保存到曲库")
-            for geometry in ("720x510", "660x480", "900x700"):
+            editor = self.app.score_editor
+            dialog, save = editor.dialog, editor.save_button
+            self.assertTrue(editor.is_source)
+            self.assertEqual(editor.name.get(), "我的旋律")
+            self.assertEqual(editor.bpm.get(), "100")
+            self.assertEqual(editor.style.get(), "原谱 · 分音")
+            self.assertEqual(save.cget("text"), "保存到曲库")
+            self.assertIs(self.app.song, original_song)
+            for geometry in ("1180x800", "960x720"):
                 with self.subTest(scaling=scaling, geometry=geometry):
                     dialog.geometry(geometry)
                     self.root.update()
                     self.assertTrue(save.winfo_ismapped(), "保存按钮被文本框挤出窗口")
                     self.assertGreaterEqual(save.winfo_height(), save.winfo_reqheight())
-                    self.assertLessEqual(save.winfo_y() + save.winfo_height(), dialog.winfo_height())
-                    self.assertLessEqual(editor.winfo_y() + editor.winfo_height(), save.winfo_y())
-            editor.delete("1.0", "end")
-            editor.insert("1.0", "1 2:1/2 0 +1:2")
+                    self.assertLessEqual(save.winfo_rooty() + save.winfo_height(),
+                                         dialog.winfo_rooty() + dialog.winfo_height())
+                    self.assertGreater(editor.text.winfo_height(), 40)
+                    self.assertLessEqual(editor.text.winfo_rooty() + editor.text.winfo_height(), save.winfo_rooty())
+                    self.assertTrue(editor.score_preview.winfo_ismapped())
+            score = "/key(C4)\nbpm90\n1 2_ 0 1'-\nL:新建旋律"
+            editor.text.delete("1.0", "end")
+            editor.text.insert("1.0", score)
             save.invoke()
             self.root.update()
             self.assertFalse(dialog.winfo_exists())
+            self.assertIsNone(self.app.score_editor)
+            self.assertEqual(self.app.song.title, "我的旋律")
             self.assertEqual([note.pitch for note in self.app.song.notes], [60, 62, 72])
             self.assertEqual(len(self.app.plan.notes), 3)
+            self.assertEqual(self.app.plan.style, "original")
             self.assertEqual(self.app.current_source[1].suffix, ".json")
             saved = json.loads(self.app.current_source[1].read_text(encoding="utf-8"))
-            self.assertEqual(saved["score"], "1 2:1/2 0 +1:2")
+            self.assertEqual(saved["editor"]["score"], score)
+            self.assertEqual(saved["editor"]["bpm"], 90)
+            self.assertIn((original_song.title, original_source), self.app.entries)
             self.assertFalse(self.app.player.active)
+            self.app.edit_song()
+            reopened = self.app.score_editor
+            self.assertTrue(reopened.is_source)
+            self.assertEqual(reopened.text.get("1.0", "end-1c"), score)
+            self.assertEqual(reopened.bpm.get(), "90")
+            reopened.close(force=True)
+
+    def test_new_score_without_selection_and_repeated_open_preserves_draft(self):
+        self.app.song = self.app.current_source = None
+        self.app.score_dialog()
+        editor = self.app.score_editor
+        self.assertIsNotNone(editor)
+        editor.name.set("未保存的新曲")
+        self.app.score_dialog()
+        self.app.edit_song()
+        self.assertIs(self.app.score_editor, editor)
+        self.assertEqual(editor.name.get(), "未保存的新曲")
+        self.assertFalse(list(self.app.library_dir.iterdir()))
+        with patch("score_editor.messagebox.askyesno", return_value=False):
+            editor.close()
+        self.assertFalse(editor.closed)
+        with patch("score_editor.messagebox.askyesno", return_value=True):
+            editor.close()
+        self.assertIsNone(self.app.score_editor)
+        self.assertFalse(list(self.app.library_dir.iterdir()))
+
+    def test_new_score_preview_f9_releases_output_and_invalid_save_keeps_draft(self):
+        from test_music import FakeOutput
+
+        original_song = self.app.song
+        self.app.score_dialog()
+        editor = self.app.score_editor
+        editor.text.delete("1.0", "end")
+        editor.text.insert("1.0", "/key(C4)\nbpm60\n1----")
+        output = FakeOutput()
+        with patch("score_editor.PreviewOutput", return_value=output), patch("app.WindowsOutput") as game:
+            editor.preview()
+            self.assertTrue(output.started.wait(1))
+            self.app.play(False)
+            game.assert_not_called()
+            self.app.stop("F9")
+            editor.player.thread.join(1)
+        self.assertFalse(editor.player.active)
+        self.assertTrue(output.closed)
+        self.assertFalse(output.held)
+        editor.text.delete("1.0", "end")
+        with patch("score_editor.messagebox.showerror") as error:
+            editor.save()
+        error.assert_called_once()
+        self.assertIs(self.app.score_editor, editor)
+        self.assertIs(self.app.song, original_song)
+        self.assertFalse(list(self.app.library_dir.iterdir()))
 
     def test_song_switch_and_restart_restore_independent_parameters(self):
         self.app.change_speed(1)
