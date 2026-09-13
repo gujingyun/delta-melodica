@@ -149,6 +149,7 @@ class App:
         self.events = queue.Queue()
         self.player = Player(lambda run_id, kind, value: self.events.put(("player", (run_id, kind, value))))
         self.song, self.plan, self.current_source = None, None, None
+        self.score_editor = None
         self.entries, self.track_ids, self.locked_widgets = [], [], []
         self.playing_mode, self.current_note = "", None
         self.seeking, self.pending_play, self.transport_revision = False, None, 0
@@ -157,6 +158,7 @@ class App:
         self.busy, self.closing = False, False
         self.update_checking = False
         self.online_catalog = []
+        self.resource_search = None
         self.online_catalog_dialog = None
         self.online_catalog_list = None
         self.online_catalog_status = None
@@ -297,9 +299,12 @@ class App:
             button = ttk.Button(sidebar, text=text, command=command, style="Accent.TButton" if command == self.import_midi else "TButton")
             button.pack(fill="x", padx=18, pady=(0, 8))
             self.locked_widgets.append(button)
-        self.online_button = ttk.Button(sidebar, text="线上曲库   ↗", command=self.online_library_dialog)
+        self.online_button = ttk.Button(sidebar, text="线上曲库 / 聚合搜索", command=self.online_library_dialog)
         self.online_button.pack(fill="x", padx=18, pady=(0, 8))
         self.locked_widgets.append(self.online_button)
+        self.edit_button = ttk.Button(sidebar, text="编辑选中乐曲", command=self.edit_song)
+        self.edit_button.pack(fill="x", padx=18, pady=(0, 8))
+        self.locked_widgets.append(self.edit_button)
         self.delete_button = ttk.Button(sidebar, text="删除选中曲目", style="Quiet.TButton", command=self.delete_song)
         self.delete_button.pack(fill="x", padx=18, pady=(0, 8))
         self.locked_widgets.append(self.delete_button)
@@ -496,6 +501,7 @@ class App:
         self.online_search_entry.bind("<KeyRelease>", self.apply_online_search)
         self.online_search_entry.bind("<Return>", self.apply_online_search)
         ttk.Button(search_frame, text="搜索", command=self.apply_online_search).pack(side="left", padx=(10, 0))
+        ttk.Button(search_frame, text="跨站搜索", command=self.resource_search_dialog).pack(side="left", padx=(8, 0))
         body = tk.Frame(dialog, bg=CARD)
         body.pack(fill="both", expand=True, padx=22)
         self.online_catalog_list = tk.Listbox(
@@ -534,7 +540,22 @@ class App:
         self.refresh_online_catalog()
         return dialog
 
+    def resource_search_dialog(self):
+        """将当前曲名交给聚合搜索，复用曲库、试听与游戏播放入口。"""
+        if self.busy:
+            return
+        if self.resource_search and not self.resource_search.closed:
+            self.resource_search.dialog.lift()
+            return self.resource_search
+        query = self.online_search.get()
+        self._close_online_library_dialog()
+        from resource_search_ui import ResourceSearchDialog
+        self.resource_search = ResourceSearchDialog(self, query)
+        return self.resource_search
+
     def _close_online_library_dialog(self):
+        if self.resource_search:
+            self.resource_search.close()
         if not self._online_dialog_alive():
             return
         self.online_operation = None
@@ -670,7 +691,17 @@ class App:
         self.library.delete(0, "end")
         selected = 0
         for index, (name, source) in enumerate(self.entries):
-            self.library.insert("end", "  " + name)
+            if source[0] == "demo":
+                label = "内置"
+            elif source[1].suffix.lower() in (".mid", ".midi"):
+                label = "MIDI"
+            else:
+                try:
+                    data = json.loads(source[1].read_text(encoding="utf-8"))
+                    label = "简谱" if data.get("version") != 1 or isinstance(data.get("editor"), dict) else "云端"
+                except (ValueError, OSError, AttributeError):
+                    label = "曲谱"
+            self.library.insert("end", f"[{label}] {name}")
             if select_path and source[1] == select_path:
                 selected = index
         self.library.selection_set(selected)
@@ -685,6 +716,7 @@ class App:
             return
         name, source = self.entries[selection[0]]
         try:
+            editor_style = None
             if source[0] == "demo":
                 bpm, score = DEMO_SCORES[source[1]]
                 song = parse_jianpu(score, bpm, name)
@@ -693,7 +725,11 @@ class App:
                 data = json.loads(source[1].read_text(encoding="utf-8"))
                 if data.get("version") == 1:
                     song = to_song(data)
-                    hint = "云端曲谱 · 可离线演奏"
+                    if isinstance(data.get("editor"), dict):
+                        editor_style = data["editor"].get("style")
+                        hint = "可编辑简谱 · 精确时值 · 本地修改版"
+                    else:
+                        hint = "云端曲谱 · 可离线演奏"
                 else:
                     song = parse_jianpu(data["score"], float(data["bpm"]), data["title"])
                     hint = f"自定义简谱 · {data['bpm']} BPM"
@@ -713,6 +749,9 @@ class App:
             self.track_combo.current(0)
             is_midi = source[0] == "file" and source[1].suffix.lower() in (".mid", ".midi")
             self.arrangement.set("钢琴适配 · 连奏" if is_midi else "原谱 · 分音")
+            for label, style in PLAY_STYLES.items():
+                if editor_style == style:
+                    self.arrangement.set(label)
             preference_warning = self.restore_song_preferences()
             self.rebuild_plan(save_preferences=False)
             if preference_warning:
@@ -1134,6 +1173,18 @@ class App:
         dialog.grab_set()
         return dialog
 
+    def edit_song(self):
+        if self.score_editor:
+            self.score_editor.dialog.lift()
+            return
+        if not self.song or self.busy or self.player.active:
+            return
+        try:
+            from score_editor import ScoreEditor
+            self.score_editor = ScoreEditor(self)
+        except (ValueError, OSError, KeyError, TypeError) as error:
+            messagebox.showerror("无法编辑乐曲", str(error), parent=self.root)
+
     def score_dialog(self):
         dialog = self._dialog("新建简谱", "720x510")
         dialog.minsize(660, 480)
@@ -1216,6 +1267,7 @@ class App:
     def _update_delete_button(self):
         if not hasattr(self, "delete_button"):
             return
+        self.edit_button.configure(state="normal" if self.song and not self.busy else "disabled")
         can_delete = bool(self.current_source and self.current_source[0] == "file" and not self.busy)
         self.delete_button.configure(state="normal" if can_delete else "disabled")
 
@@ -1341,6 +1393,9 @@ class App:
         self.log.info("停止请求：%s", source)
         self.transport_revision += 1
         self.player.stop()
+        editor = self.score_editor
+        if editor:
+            editor.stop_preview()
         self.events.put(("stop_ui", (self.player.run_id, self.transport_revision)))
 
     def pause(self, source="暂停"):
@@ -1650,6 +1705,8 @@ class App:
         if self.closing:
             return
         self.closing = True
+        if self.score_editor:
+            self.score_editor.close(force=True)
         self._close_online_library_dialog()
         self.root.after_cancel(self.poll_timer)
         self.player.close()
@@ -1711,7 +1768,13 @@ def main():
                         imported = read_midi(source[1])
                         assert compile_plan(imported, app.mapping(), track="auto", style="piano").notes
                         midi_tested += 1
-                Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": True, "notes": len(app.plan.notes), "midi_tested": midi_tested, "width": root.winfo_width(), "height": root.winfo_height(), "tray": True, "hide_restore": True}), encoding="utf-8")
+                app.edit_song()
+                editor = app.score_editor
+                assert editor and editor.parsed().notes, "乐曲编辑器未能打开曲谱"
+                root.update()
+                assert editor.save_button.winfo_ismapped(), "编辑器保存按钮不可见"
+                editor.close(force=True)
+                Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": True, "notes": len(app.plan.notes), "midi_tested": midi_tested, "width": root.winfo_width(), "height": root.winfo_height(), "tray": True, "hide_restore": True, "editor": True}), encoding="utf-8")
             except Exception as error:
                 smoke_exit = 1
                 Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": False, "error": str(error)}), encoding="utf-8")
