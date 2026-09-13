@@ -37,10 +37,10 @@ class ResourceSearchDialog:
         self.dialog.protocol("WM_DELETE_WINDOW", self.close)
         self.query = tk.StringVar(value=query)
         self.rule_mode = tk.StringVar(value="按谱面规则")
-        self.status = tk.StringVar(value="输入曲名或歌手，默认搜索简谱；也可勾选 MIDI 来源。支持繁简体曲名匹配。")
+        self.status = tk.StringVar(value="输入曲名或歌手，默认搜索全部来源；可取消不需要的来源。支持繁简体曲名匹配。")
         self.detail = tk.StringVar(value="简谱按音符和时值导入，先试听、再按 F8 演奏；未标速度或调号时会提示默认值。")
         self.source_summary = tk.StringVar(value="")
-        self.enabled = {source: tk.BooleanVar(value=source == "jianpu") for source in SOURCES}
+        self.enabled = {source: tk.BooleanVar(value=True) for source in SOURCES}
         self._build()
         self.timer = app.root.after(40, self._poll)
         self.entry.focus_set()
@@ -269,7 +269,7 @@ class ResourceSearchDialog:
                                             else "部分来源未能获取结果，不能确定是否有匹配曲目；可打开源站查看或稍后重试。")
                         else:
                             self.status.set("搜索完成。选择曲目导入或试听。" if self.songs
-                                            else "未找到匹配曲目。可换用别名、勾选 MIDI 来源，或打开源站；简谱空间曲目数量有限。")
+                                            else "未找到匹配曲目。可换用别名或打开源站；搜索范围取决于各站收录。")
                     self._summary()
                 elif kind == "download":
                     song, path, preview, error = value
