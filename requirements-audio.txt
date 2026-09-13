@@ -1,0 +1,12 @@
+# 扒谱引擎使用独立 Python 3.10，不安装到主程序的 Python 3.13 环境。
+--extra-index-url https://download.pytorch.org/whl/cpu
+basic-pitch==0.4.0
+demucs==4.1.0
+torch==2.14.0+cpu
+onnxruntime==1.23.2
+librosa==0.11.0
+numpy==2.2.6
+scipy==1.15.3
+resampy==0.4.2
+soundfile==0.13.1
+setuptools==70.3.0
