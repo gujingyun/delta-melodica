@@ -16,6 +16,23 @@ advapi32 = ct.WinDLL("advapi32", use_last_error=True)
 shell32 = ct.WinDLL("shell32", use_last_error=True)
 
 
+def simplified_chinese(text: str) -> str:
+    """用 Windows 字符映射统一繁简搜索，返回值只用于匹配，不改曲名。"""
+    if not text:
+        return text
+    convert = kernel32.LCMapStringEx
+    convert.argtypes = (wt.LPCWSTR, wt.DWORD, wt.LPCWSTR, ct.c_int, wt.LPWSTR,
+                        ct.c_int, ct.c_void_p, ct.c_void_p, ct.c_ssize_t)
+    convert.restype = ct.c_int
+    size = convert("zh-CN", 0x02000000, text, -1, None, 0, None, None, 0)
+    if not size:
+        raise ct.WinError(ct.get_last_error())
+    result = ct.create_unicode_buffer(size)
+    if not convert("zh-CN", 0x02000000, text, -1, result, size, None, None, 0):
+        raise ct.WinError(ct.get_last_error())
+    return result.value
+
+
 class MOUSEINPUT(ct.Structure):
     _fields_ = [("dx", wt.LONG), ("dy", wt.LONG), ("mouseData", wt.DWORD),
                 ("dwFlags", wt.DWORD), ("time", wt.DWORD), ("dwExtraInfo", ct.c_size_t)]

@@ -8,6 +8,7 @@ from fractions import Fraction
 from pathlib import Path
 import math
 import re
+import unicodedata
 
 SCALE = (0, 2, 4, 5, 7, 9, 11)
 
@@ -122,6 +123,101 @@ def parse_jianpu(text: str, bpm: float = 100, title: str = "自定义简谱", *,
     if cursor > 1800:
         raise ValueError("第一版支持最长 30 分钟的曲目。")
     return Song(title.strip() or "自定义简谱", notes, duration=cursor)
+
+
+def parse_jianpu_space(text: str, title: str) -> tuple[Song, list[str]]:
+    """读取简谱空间的文本记谱；不认识的演奏符号报错，避免静默漏音。"""
+    if len(text) > 200000:
+        raise ValueError("简谱文字不能超过 20 万个字符。")
+    lines = unicodedata.normalize("NFKC", text).splitlines()
+    music_lines = []
+    for line_number, line in enumerate(lines, 1):
+        line = line.strip()
+        if line.startswith("L:"):
+            if re.search(r"\([升降+\-]\d+key\)", line, re.IGNORECASE):
+                raise ValueError("此谱含歌词中的转调指令，暂不能直接导入，请打开源谱校对。")
+            continue
+        music_lines.append((line_number, line))
+    key_pattern = re.compile(r"/key\(([A-Ga-g])([#b]?)([0-9]?)\)")
+    keys = {match.groups() for _, line in music_lines for match in key_pattern.finditer(line)}
+    if len(keys) > 1:
+        raise ValueError("此谱含多个调号，暂不能直接导入，请打开源谱校对。")
+    base, warnings = 60, []
+    if keys:
+        letter, accidental, octave = next(iter(keys))
+        letter = letter.upper()
+        # 沿用谱源的缺省音区：G、A、B 从第三组起，其余从第四组起。
+        octave = int(octave) if octave else (3 if letter in "GAB" else 4)
+        base = 12 * (octave + 1) + dict(zip("CDEFGAB", SCALE))[letter]
+        base += {"": 0, "#": 1, "b": -1}[accidental]
+    else:
+        warnings.append("谱中未标调号，按 1=C4 导入，可在主界面移调。")
+    token_pattern = re.compile(r"(#{1,2}|b{1,2}|n)?([0-7]|-)((?:'+|,+)?)(-+|=*_?)(\.{0,2})")
+    bar_pattern = re.compile(r"\|[|\]]?")
+    chord_pattern = re.compile(r"[A-G][#b]?(?:(?:maj|min|m|dim|aug|sus|add)?(?:[2-9]|11|13)?)(?:/[A-G][#b]?)?")
+    notes, cursor, bpm, used_default_tempo = [], 0.0, 120.0, False
+    tempo_set, previous_is_note, skipped_chords = False, False, False
+    for line_number, line in music_lines:
+        if not line:
+            continue
+        tempo = re.fullmatch(r"bpm\s*[:=]?\s*(\d+(?:\.\d+)?)", line, re.IGNORECASE)
+        if tempo:
+            bpm = float(tempo[1])
+            if not 20 <= bpm <= 500:
+                raise ValueError(f"第 {line_number} 行速度需在 20～500 BPM 之间。")
+            tempo_set = True
+            continue
+        if all(chord_pattern.fullmatch(chord) for chord in line.split()):
+            skipped_chords = True
+            continue
+        index = 0
+        while index < len(line):
+            key = key_pattern.match(line, index)
+            bar = bar_pattern.match(line, index)
+            if key or bar:
+                index += len((key or bar)[0])
+                continue
+            if line[index].isspace():
+                index += 1
+                continue
+            match = token_pattern.match(line, index)
+            if not match:
+                raise ValueError(f"第 {line_number} 行第 {index + 1} 字附近「{line[index:index+16]}」含暂不支持的记谱，请打开源谱校对。")
+            accidental, degree, octave, length, dots = match.groups()
+            if degree in ("0", "-") and (accidental or octave):
+                raise ValueError(f"第 {line_number} 行休止或延音不能带升降号、八度点。")
+            if len(length) > 63 or length.count("=") > 5:
+                raise ValueError(f"第 {line_number} 行音符时值超出支持范围。")
+            beats = 1 + len(length) if length.startswith("-") else 0.5 ** (2 * length.count("=") + length.count("_"))
+            beats *= 2 - 0.5 ** len(dots)
+            end = cursor + beats * 60 / bpm
+            if not tempo_set:
+                used_default_tempo = True
+            if degree == "-":
+                if cursor == 0:
+                    raise ValueError("乐谱不能以延音线开头。")
+                if previous_is_note:
+                    last = notes[-1]
+                    notes[-1] = Note(last.start, end, last.pitch)
+            elif degree == "0":
+                previous_is_note = False
+            else:
+                pitch = base + SCALE[int(degree) - 1] + 12 * (octave.count("'") - octave.count(","))
+                pitch += (accidental or "").count("#") - (accidental or "").count("b")
+                if not 0 <= pitch <= 127:
+                    raise ValueError(f"第 {line_number} 行音高超出 MIDI 0～127 的范围。")
+                notes.append(Note(cursor, end, pitch))
+                previous_is_note = True
+            cursor, index = end, match.end()
+            if cursor > 1800 or len(notes) > 30000:
+                raise ValueError("简谱最多支持 30000 个音符、30 分钟。")
+    if not notes:
+        raise ValueError("简谱中没有可演奏的音符。")
+    if used_default_tempo:
+        warnings.insert(0, "未标速度的部分按 120 BPM 导入，可在编辑器调整。")
+    if skipped_chords:
+        warnings.append("独立和弦标记不演奏，仅导入简谱主旋律。")
+    return Song(title.strip() or "在线简谱", notes, duration=cursor), warnings
 
 
 def jianpu_pitch(pitch: int) -> str:
