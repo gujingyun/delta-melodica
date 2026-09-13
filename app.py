@@ -665,7 +665,7 @@ class App:
     def _load_library(self, select_path=None):
         self.entries = [(name, ("demo", name)) for name in DEMO_SCORES]
         for path in sorted(self.library_dir.iterdir()):
-            if path.suffix.lower() in (".mid", ".midi", ".json") and self.account.visible(path):
+            if path.suffix.lower() in (".mid", ".midi", ".json"):
                 self.entries.append((path.stem.split("__", 1)[-1], ("file", path)))
         self.library.delete(0, "end")
         selected = 0

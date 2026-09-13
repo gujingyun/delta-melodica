@@ -67,7 +67,7 @@ class AccountPanel:
                 self.buttons.append(entry)
             self.send_button = self.button(box, "发送邮箱验证码", self.send_code)
             self.submit_button = self.button(box, "登录", self.submit)
-            tk.Label(box, text="游客仍可导入、试听、演奏和下载公开曲库。\n注册后，本机游客曲谱会自动归入此账号并同步至私有云端。原文件保留为本机备份。",
+            tk.Label(box, text="游客仍可导入、试听、演奏和下载公开曲库。\n注册后，本机游客曲谱会自动归入此账号并同步至私有云端。原曲保留在本机，退出登录后仍可使用。",
                      bg=BG, fg=MUTED, wraplength=450, justify="left").pack(anchor="w", pady=14)
             self.update_form()
         tk.Label(box, textvariable=self.message, bg=BG, fg=TEXT, wraplength=450, justify="left").pack(fill="x", pady=14)

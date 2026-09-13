@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import mido
 
+from account_client import atomic_json
 from app import App, parse_clock, precise_clock_label
 
 
@@ -51,6 +52,36 @@ class SongSettingsTests(unittest.TestCase):
         path = self.app.library_dir / name
         midi.save(path)
         return path
+
+    def test_guest_restart_shows_claimed_songs_and_restores_preferences(self):
+        midi_path = self.add_midi("legacy__游客旋律.mid")
+        score_path = self.app.library_dir / "legacy__游客简谱.json"
+        atomic_json(score_path, {"title": "游客简谱", "bpm": 100, "score": "1 2 3"})
+        self.app._load_library(midi_path)
+        self.app.change_speed(1)
+        self.app.change_transpose(3)
+        expected_speed = self.app.speed.get()
+        originals = {path: path.read_bytes() for path in (midi_path, score_path)}
+        # 模拟旧预览版退出登录后的磁盘状态，保留归属记录和账号私有副本。
+        owner = "a" * 32
+        atomic_json(Path(self.folder.name) / "guest-claims.json", {
+            "owners": {path.name: owner for path in originals}, "pending": None,
+        })
+        private_path = Path(self.folder.name) / "accounts" / owner / "songs" / "private.json"
+        atomic_json(private_path, {"title": "账号专属曲谱", "bpm": 100, "score": "3 4 5"})
+        self.restart()
+        self.assertIsNone(self.app.account.user)
+        files = {source[1] for _, source in self.app.entries if source[0] == "file"}
+        self.assertEqual(files, set(originals))
+        self.assertEqual(self.app.account.guest_files(), [])
+        self.app._load_library(midi_path)
+        self.assertEqual(self.app.current_source, ("file", midi_path))
+        self.assertEqual(self.app.speed.get(), expected_speed)
+        self.assertEqual(self.app.transpose.get(), "3")
+        self.assertTrue(self.app.plan.notes)
+        for path, original in originals.items():
+            self.assertEqual(path.read_bytes(), original)
+        self.assertTrue(private_path.is_file())
 
     def test_score_dialog_save_stays_visible_and_selects_new_song(self):
         for scaling in (4 / 3, 2, 8 / 3):

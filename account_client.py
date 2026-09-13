@@ -107,10 +107,8 @@ class AccountClient:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def visible(self, path):
-        return bool(self.user) or path.name not in self.state["owners"]
-
     def guest_files(self):
+        """只返回尚可归属账号的游客文件；归属记录不影响游客本地显示。"""
         folder = self.root / "songs"
         return [p for p in sorted(folder.iterdir()) if p.is_file() and not p.is_symlink()
                 and p.suffix.lower() in (".mid", ".midi", ".json") and p.name not in self.state["owners"]] if folder.exists() else []
@@ -181,7 +179,7 @@ class AccountClient:
                     shutil.copy2(source, target)
 
     def claim_guest(self):
-        """先记录批次再申请归属，成功后复制本地文件，原文件作为恢复备份保留。"""
+        """先记录批次再申请归属，成功后复制本地文件，原文件保留供游客继续使用。"""
         if not self.user:
             raise AccountError("请先登录后合并游客曲库", 401)
         pending = self.state.get("pending")
