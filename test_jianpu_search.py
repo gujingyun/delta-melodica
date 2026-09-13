@@ -79,8 +79,8 @@ class JianpuNotationTests(unittest.TestCase):
         self.assertTrue(any("ji" in warning and "第 2 行" in warning for warning in warnings))
 
     def test_unsupported_notation_and_invalid_values_fail_instead_of_skipping(self):
-        for text in ("1 :|", "1 (3 234)", "1 & 3", "1 /unknown(2)", "1__", "- 1", "#0 1",
-                     "1 b-", "1 n", "1 jnb1", "1 8", "/key(C)1 /key(D)2", "bpm 0\n1",
+        for text in ("1 & 3", "1 /unknown(2)", "1__", "- 1", "#0 1",
+                     "1 b-", "1 n", "1 jnb1", "1 8", "bpm 0\n1",
                      "bpm 501\n1", "/key(C9)7'", "1" + "=" * 6, "1" + "-" * 64, "0 0"):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 parse_jianpu_space(text, "无效")

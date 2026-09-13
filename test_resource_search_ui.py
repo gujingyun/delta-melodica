@@ -92,12 +92,53 @@ class ResourceSearchDialogTests(unittest.TestCase):
         self.dialog.close()
         self.dialog = self.app.resource_search_dialog()
         self.assertEqual([source for source, enabled in self.dialog.enabled.items() if enabled.get()], ["jianpu"])
+        self.assertEqual(self.dialog.rule_mode.get(), "按谱面规则")
+
+    def test_selected_rule_mode_is_used_for_import(self):
+        import json
+        from test_jianpu_search import score_page
+        song = SearchSong("jianpu", "规则选择", "https://jianpu.space/songList/42")
+        self.search([song])
+        self.dialog.rule_mode.set("跟随源站播放")
+        self.dialog.select()
+        self.assertIn("最后一个调号", self.dialog.detail.get())
+        with patch("resource_search._fetch_html", return_value=score_page("/key(C4)\n|:1/key(D4)2:|")):
+            self.dialog.download()
+            self.assertEqual(str(self.dialog.rule_combo["state"]), "disabled")
+            self.wait_until(lambda: not self.dialog.downloading)
+        self.assertEqual([n.pitch for n in self.app.song.notes], [62, 64])
+        self.assertIn("跟随源站播放", self.app.subtitle.get())
+        data = json.loads(self.app.current_source[1].read_text(encoding="utf-8"))
+        self.assertEqual(data["jianpu_source"]["mode"], "source")
+
+    def test_rule_import_editor_save_and_reopen_preserve_note_holds(self):
+        from test_jianpu_search import score_page
+        from cloud_score import from_song
+        self.search([SearchSong("jianpu", "反复连奏", "https://jianpu.space/songList/42")])
+        with patch("resource_search._fetch_html", return_value=score_page("|:1~1 (2 3)[1 4:|[2 5")):
+            self.dialog.download()
+            self.wait_until(lambda: not self.dialog.downloading)
+        self.assertEqual([n.pitch for n in self.app.song.notes], [60, 62, 64, 65, 60, 62, 64, 67])
+        expected = from_song(self.app.song)
+        original_path = self.app.current_source[1]
+        self.dialog.close()
+        self.app.edit_song()
+        editor = self.app.score_editor
+        editor.name.set(self.app.song.title)
+        self.assertEqual(from_song(editor.parsed()), expected)
+        editor.save()
+        self.assertNotEqual(editor.saved_path, original_path)
+        self.assertEqual(from_song(self.app.song), expected)
+        self.app.edit_song()
+        self.assertEqual(from_song(self.app.score_editor.parsed()), {**expected, "title": "反复连奏 · 修改版"})
+        self.assertEqual([n.legato for n in self.app.plan.notes], [True, True, True, False] * 2)
+        self.app.score_editor.close(force=True)
 
     def test_invalid_jianpu_does_not_replace_current_song_or_preview(self):
         from test_jianpu_search import score_page
         self.search([SearchSong("jianpu", "无法识别", "https://jianpu.space/songList/42")])
         original = self.app.current_source
-        with patch("resource_search._fetch_html", return_value=score_page("1 :| 2")), patch.object(self.app, "play") as play:
+        with patch("resource_search._fetch_html", return_value=score_page("1 & 2")), patch.object(self.app, "play") as play:
             self.dialog.download(True)
             self.wait_until(lambda: not self.dialog.downloading)
         self.assertEqual(self.app.current_source, original)

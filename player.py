@@ -12,7 +12,7 @@ class Cancelled(Exception):
 
 def release_time(note, next_note=None, gate=0.85, legato=False):
     """连奏按完整时值吹奏，只在衔接处留出最多 25 毫秒重新触发。"""
-    if not legato:
+    if not (legato or note.legato):
         return note.start+(note.end-note.start)*gate
     if next_note is None:
         return note.end

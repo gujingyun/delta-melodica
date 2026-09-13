@@ -37,16 +37,28 @@ def score_id(score):
 
 def from_song(song):
     """桌面浮点秒转换为交换格式的整数毫秒。"""
-    notes = [[round(n.start * 1000), max(round(n.start * 1000) + 1, round(n.end * 1000)), n.pitch, n.track]
-             for n in song.notes]
-    return normalize_score({"version": 1, "title": song.title[:100],
-                            "duration": max(round(song.duration * 1000), max(n[1] for n in notes)), "notes": notes})
+    rows = sorted(([round(n.start * 1000), max(round(n.start * 1000) + 1, round(n.end * 1000)), n.pitch, n.track],
+                   n.legato) for n in song.notes)
+    notes = [row for row, _ in rows]
+    result = normalize_score({"version": 1, "title": song.title[:100],
+                              "duration": max(round(song.duration * 1000), max(n[1] for n in notes)), "notes": notes})
+    # 连奏是桌面本地附注；云端交换协议仍保留现有的四整数音符格式。
+    legato = [index for index, (_, enabled) in enumerate(rows) if enabled]
+    if legato:
+        result["legato"] = legato
+    return result
 
 
 def to_song(value):
     """延迟导入桌面模型，使后端不依赖 MIDI 或 Windows。"""
     from music import Note, Song
-    value = normalize_score(value)
-    tracks = {n[3]: f"音轨 {n[3] + 1}" for n in value["notes"]}
-    return Song(value["title"], [Note(a / 1000, b / 1000, p, t) for a, b, p, t in value["notes"]],
-                tracks, value["duration"] / 1000)
+    normalized = normalize_score(value)
+    legato = value.get("legato", [])
+    if (not isinstance(legato, list) or len(legato) > len(value["notes"])
+            or any(type(index) is not int or not 0 <= index < len(value["notes"]) for index in legato)):
+        raise ValueError("本地连奏音符编号无效")
+    legato = set(legato)
+    rows = sorted(enumerate(value["notes"]), key=lambda item: item[1])
+    tracks = {n[3]: f"音轨 {n[3] + 1}" for n in normalized["notes"]}
+    return Song(normalized["title"], [Note(a / 1000, b / 1000, p, t, index in legato)
+                                      for index, (a, b, p, t) in rows], tracks, normalized["duration"] / 1000)
