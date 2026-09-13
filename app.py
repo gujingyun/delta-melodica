@@ -732,7 +732,8 @@ class App:
                         hint = "云端曲谱 · 可离线演奏"
                     if isinstance(data.get("jianpu_source"), dict):
                         warnings = data["jianpu_source"].get("warnings", [])
-                        hint = "在线简谱 · 可编辑 / 离线演奏" + (" · " + " ".join(warnings) if warnings else " · 已读取谱中速度与调号")
+                        mode = "按谱面规则" if data["jianpu_source"].get("mode") == "score" else "跟随源站播放"
+                        hint = f"在线简谱 · {mode} · 可编辑 / 离线演奏" + (" · " + " ".join(warnings) if warnings else " · 已读取谱中速度与调号")
                 else:
                     song = parse_jianpu(data["score"], float(data["bpm"]), data["title"])
                     hint = f"自定义简谱 · {data['bpm']} BPM"
@@ -1776,10 +1777,12 @@ def main():
                         if isinstance(data.get("jianpu_source"), dict):
                             from cloud_score import from_song
                             from music import parse_jianpu_space
-                            parsed, _ = parse_jianpu_space(data["jianpu_source"]["text"], data["title"])
+                            parsed, _ = parse_jianpu_space(data["jianpu_source"]["text"], data["title"],
+                                                         mode=data["jianpu_source"].get("mode", "source"))
                             assert from_song(parsed) == from_song(to_song(data)), "原简谱解析结果与保存音符不一致"
                             assert compile_plan(to_song(data), app.mapping(), style="original").notes
-                            assert parse_jianpu(data["editor"]["score"], data["editor"]["bpm"], precise=True).notes
+                            edited = parse_jianpu(data["editor"]["score"], data["editor"]["bpm"], data["title"], precise=True)
+                            assert from_song(edited) == from_song(to_song(data)), "编辑文字丢失音符、时值或连奏"
                             jianpu_tested += 1
                 app.edit_song()
                 editor = app.score_editor
@@ -1793,6 +1796,8 @@ def main():
                 root.update()
                 assert search.search_button.winfo_ismapped(), "聚合搜索按钮不可见"
                 assert search.enabled["jianpu"].get(), "搜索窗口未默认选择简谱来源"
+                assert search.rule_mode.get() == "按谱面规则", "简谱未默认使用谱面规则"
+                assert search.rule_combo.winfo_ismapped(), "简谱规则选择不可见"
                 search.close()
                 Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": True, "notes": len(app.plan.notes), "midi_tested": midi_tested, "jianpu_tested": jianpu_tested, "width": root.winfo_width(), "height": root.winfo_height(), "tray": True, "hide_restore": True, "editor": True, "aggregate_search": True, "jianpu_search": True}), encoding="utf-8")
             except Exception as error:

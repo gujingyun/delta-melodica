@@ -6,7 +6,7 @@ from tkinter import ttk, messagebox
 import uuid
 
 from account_client import atomic_json
-from cloud_score import from_song, normalize_score
+from cloud_score import from_song, to_song
 from music import DEMO_SCORES, compile_plan, parse_jianpu, song_to_jianpu, transpose_jianpu
 from player import Player
 from win_input import PreviewOutput
@@ -82,7 +82,7 @@ class ScoreEditor:
         help_box = tk.Frame(self.dialog, bg=BG, highlightbackground=LINE, highlightthickness=1)
         help_box.pack(fill="x", padx=24, pady=(0, 10))
         tk.Label(help_box, text="1～7 音阶   +1 高八度   -1 低八度   #4 升半音   b3 降半音   0 休止\n"
-                 "默认一拍；1:2 两拍；1:1/2 半拍。空格分隔，选中完整音符可试听片段。",
+                 "1:2 两拍；1:1/2 半拍；(1 2 3) 连奏。空格分隔，试听时选中完整音符及括号。",
                  fg=MUTED, bg=BG, justify="left", font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=12, pady=10)
         tk.Label(self.dialog, text="MIDI 按所选音轨转为完整原速旋律；精确拍数保留节奏，修改 BPM 可整体调速。",
                  fg=MUTED, bg=CARD, font=("Microsoft YaHei UI", 9)).pack(anchor="w", padx=24, pady=(0, 8))
@@ -122,7 +122,7 @@ class ScoreEditor:
             if isinstance(saved, dict):
                 try:
                     parsed = parse_jianpu(saved["score"], float(saved["bpm"]), data["title"], precise=True)
-                    if from_song(parsed) == normalize_score(data):
+                    if from_song(parsed) == from_song(to_song(data)):
                         return saved["score"], saved["bpm"]
                 except (KeyError, ValueError, TypeError):
                     pass

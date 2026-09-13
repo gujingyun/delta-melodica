@@ -291,12 +291,12 @@ def resolve_download(song: SearchSong) -> str:
 
 
 def download_resource(song: SearchSong, library_dir: Path, mapping: Mapping,
-                      cancel: threading.Event) -> Path:
+                      cancel: threading.Event, *, jianpu_mode="score") -> Path:
     """先验证下载与八键转换，成功后才把完整曲谱放入曲库。"""
     if cancel.is_set():
         raise SearchCancelled()
     if song.source == "jianpu":
-        return _download_jianpu(song, Path(library_dir), mapping, cancel)
+        return _download_jianpu(song, Path(library_dir), mapping, cancel, jianpu_mode)
     url = resolve_download(song)
     library_dir = Path(library_dir)
     library_dir.mkdir(parents=True, exist_ok=True)
@@ -321,7 +321,7 @@ def download_resource(song: SearchSong, library_dir: Path, mapping: Mapping,
 
 
 def _download_jianpu(song: SearchSong, library_dir: Path, mapping: Mapping,
-                     cancel: threading.Event) -> Path:
+                     cancel: threading.Event, mode="score") -> Path:
     parser = _JianpuText()
     parser.feed(_fetch_html(song.page_url))
     if cancel.is_set():
@@ -329,13 +329,13 @@ def _download_jianpu(song: SearchSong, library_dir: Path, mapping: Mapping,
     if not parser.found or parser.depth:
         raise ValueError("未找到完整简谱文字；此页面可能需要验证或不支持直接导入。")
     source_text = "".join(parser.parts)
-    parsed, warnings = parse_jianpu_space(source_text, song.title)
+    parsed, warnings = parse_jianpu_space(source_text, song.title, mode=mode)
     if not compile_plan(parsed, mapping, track="auto", style="original").notes:
         raise ValueError("此简谱没有可演奏的音符。")
     data = from_song(parsed)
     # 精确拍数保存源谱变速，编辑器直接复用既有格式；原谱文字另存供核对。
     data["editor"] = {"score": song_to_jianpu(parsed), "bpm": 120, "style": "original"}
-    data["jianpu_source"] = {"url": song.page_url, "text": source_text, "warnings": warnings}
+    data["jianpu_source"] = {"url": song.page_url, "text": source_text, "warnings": warnings, "mode": mode}
     body = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
     if len(body) > MAX_PAGE_BYTES:
         raise ValueError("转换后的简谱超过 2 MB。")

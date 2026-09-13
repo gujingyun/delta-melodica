@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from pathlib import Path
 import math
@@ -19,6 +19,7 @@ class Note:
     end: float
     pitch: int
     track: int = 0
+    legato: bool = False
 
 
 @dataclass
@@ -67,6 +68,7 @@ class PlayNote:
     end: float
     source_pitch: int
     fingering: Fingering
+    legato: bool = False
 
 
 @dataclass
@@ -91,10 +93,23 @@ def parse_jianpu(text: str, bpm: float = 100, title: str = "自定义简谱", *,
     notes, cursor = [], 0.0
     pattern = re.compile(r"(\+{0,5}|-{1,5})([#b]?)([0-7])(?::(\d+(?:/\d+|\.\d+)?))?")
     clean = re.sub(r"//[^\n]*", "", text).replace("|", " ").replace("，", " ")
-    tokens = clean.split()
-    if len(tokens) > (60001 if precise else 30000):
+    tokens = clean.replace("(", " ( ").replace(")", " ) ").split()
+    if len(tokens) > (120002 if precise else 90000):
         raise ValueError("乐谱最多支持 30000 个音符。")
+    slurs = []
     for token in tokens:
+        if token == "(":
+            if len(slurs) >= 8:
+                raise ValueError("连线最多嵌套 8 层。")
+            slurs.append(len(notes))
+            continue
+        if token == ")":
+            if not slurs or slurs[-1] == len(notes):
+                raise ValueError("连线括号不配对或没有音符。")
+            start = slurs.pop()
+            # 编辑器括号仅标记连奏；导入的同音延音已合并为一个长音。
+            notes[start:] = [replace(note, legato=True) for note in notes[start:]]
+            continue
         match = pattern.fullmatch(token)
         if not match:
             raise ValueError(f"无法识别「{token}」。请用空格分隔，例如：1 2 3:2 +1 -5 #4 0。")
@@ -116,6 +131,8 @@ def parse_jianpu(text: str, bpm: float = 100, title: str = "自定义简谱", *,
         elif octave or accidental:
             raise ValueError("休止符 0 不需要八度或升降号。")
         cursor = end
+    if slurs:
+        raise ValueError("连线缺少右括号。")
     if not notes:
         raise ValueError("乐谱中没有可演奏的音符。")
     if len(notes) > 30000:
@@ -154,41 +171,85 @@ def _jianpu_lyric_key_changes(lines: list[tuple[int, str]]) -> dict[int, int]:
     return changes
 
 
-def parse_jianpu_space(text: str, title: str) -> tuple[Song, list[str]]:
-    """读取简谱空间的文本记谱；不认识的演奏符号报错，避免静默漏音。"""
+@dataclass(frozen=True)
+class _JianpuEvent:
+    kind: str
+    value: object = None
+    line: int = 0
+    position: int = -1
+
+
+def _jianpu_repeats(events: list[_JianpuEvent]) -> list[_JianpuEvent]:
+    """把反复和一、二房子整理成有限的结构，展开时再恢复段首调号和速度。"""
+    index = 0
+
+    def sequence(depth=0, explicit=False):
+        nonlocal index
+        body, first = [], None
+        while index < len(events):
+            event = events[index]
+            index += 1
+            if event.kind == "repeat_start":
+                if depth >= 8:
+                    raise ValueError(f"第 {event.line} 行反复最多嵌套 8 层。")
+                repeated = sequence(depth + 1, True)
+                (body if first is None else first).append(_JianpuEvent("repeat", repeated, event.line))
+            elif event.kind == "ending1":
+                if first is not None:
+                    raise ValueError(f"第 {event.line} 行一房子重复出现。")
+                first = []
+            elif event.kind == "repeat_end":
+                if not body or first == []:
+                    raise ValueError(f"第 {event.line} 行反复段或一房子为空。")
+                if first is not None:
+                    if index >= len(events) or events[index].kind != "ending2":
+                        raise ValueError(f"第 {event.line} 行一房子结束后需要 [2 二房子。")
+                    index += 1
+                    if index >= len(events) or events[index].kind in ("repeat_end", "ending1", "ending2"):
+                        raise ValueError(f"第 {event.line} 行二房子没有内容。")
+                if explicit:
+                    return body, first
+                # 缺省起始反复号时，从曲首（或上一个已完成的反复段之后）重复。
+                after = max((i + 1 for i, item in enumerate(body) if item.kind == "repeat"), default=0)
+                if not body[after:]:
+                    raise ValueError(f"第 {event.line} 行反复段为空，请补写 |: 起点。")
+                body = body[:after] + [_JianpuEvent("repeat", (body[after:], first), event.line)]
+                first = None
+            elif event.kind == "ending2":
+                raise ValueError(f"第 {event.line} 行二房子前缺少 [1 和 :|。")
+            else:
+                (body if first is None else first).append(event)
+        if explicit or first is not None:
+            raise ValueError("反复段缺少结束符 :|。")
+        return body
+
+    return sequence()
+
+
+def parse_jianpu_space(text: str, title: str, *, mode="score") -> tuple[Song, list[str]]:
+    """读取文字简谱；谱面模式补齐演奏结构，源站模式保留已核对的播放差异。"""
+    if mode not in ("score", "source"):
+        raise ValueError("请选择按谱面规则或跟随源站播放。")
     if len(text) > 200000:
         raise ValueError("简谱文字不能超过 20 万个字符。")
-    lines = unicodedata.normalize("NFKC", text).splitlines()
     music_lines, lyric_lines = [], []
-    for line_number, line in enumerate(lines, 1):
+    for line_number, line in enumerate(unicodedata.normalize("NFKC", text).splitlines(), 1):
         line = line.strip()
         if line.startswith("L:"):
             lyric_lines.append((line_number, line[2:]))
-            continue
-        music_lines.append((line_number, line))
-    has_key_changes = any(re.search(r"\([升降+\-]\d+key\)", line, re.IGNORECASE) for _, line in lyric_lines)
-    key_changes = _jianpu_lyric_key_changes(lyric_lines) if has_key_changes else {}
+        else:
+            music_lines.append((line_number, line))
+    has_changes = any(re.search(r"\([升降+\-]\d+key\)", line, re.IGNORECASE) for _, line in lyric_lines)
+    key_changes = _jianpu_lyric_key_changes(lyric_lines) if has_changes else {}
     key_pattern = re.compile(r"/key\(([A-Ga-g])([#b]?)([0-9]?)\)")
-    keys = {match.groups() for _, line in music_lines for match in key_pattern.finditer(line)}
-    if len(keys) > 1:
-        raise ValueError("此谱含多个调号，暂不能直接导入，请打开源谱校对。")
-    base, warnings = 60, []
-    if keys:
-        letter, accidental, octave = next(iter(keys))
-        letter = letter.upper()
-        # 沿用谱源的缺省音区：G、A、B 从第三组起，其余从第四组起。
-        octave = int(octave) if octave else (3 if letter in "GAB" else 4)
-        base = 12 * (octave + 1) + dict(zip("CDEFGAB", SCALE))[letter]
-        base += {"": 0, "#": 1, "b": -1}[accidental]
-    else:
-        warnings.append("谱中未标调号，按 1=C4 导入，可在主界面移调。")
     token_pattern = re.compile(r"(#{1,2}|b{1,2}|n)?([0-7]|-)((?:'+|,+)?)(-+|=*_?)(\.{0,2})")
     bar_pattern = re.compile(r"\|[|\]]?")
     annotation_pattern = re.compile(r"[ac-mo-z]+")
     chord_pattern = re.compile(r"[A-G][#b]?(?:(?:maj|min|m|dim|aug|sus|add)?(?:[2-9]|11|13)?)(?:/[A-G][#b]?)?")
-    notes, cursor, bpm, used_default_tempo = [], 0.0, 120.0, False
-    transpose, annotations = 0, []
-    tempo_set, previous_is_note, skipped_chords = False, False, False
+    events, keys, annotations, warnings = [], [], [], []
+    source_count, skipped_chords, ignored_structure = 0, False, False
+    structures = {"|:": "repeat_start", ":|": "repeat_end", "[1": "ending1", "[2": "ending2",
+                  "(": "slur_start", ")": "slur_end", "~": "tie"}
     for line_number, line in music_lines:
         if not line:
             continue
@@ -197,28 +258,54 @@ def parse_jianpu_space(text: str, title: str) -> tuple[Song, list[str]]:
             bpm = float(tempo[1])
             if not 20 <= bpm <= 500:
                 raise ValueError(f"第 {line_number} 行速度需在 20～500 BPM 之间。")
-            tempo_set = True
+            events.append(_JianpuEvent("tempo", bpm, line_number))
             continue
         if all(chord_pattern.fullmatch(chord) for chord in line.split()):
             skipped_chords = True
             continue
         index = 0
         while index < len(line):
-            key = key_pattern.match(line, index)
-            bar = bar_pattern.match(line, index)
-            if key or bar:
-                index += len((key or bar)[0])
-                continue
             if line[index].isspace():
                 index += 1
+                continue
+            key = key_pattern.match(line, index)
+            if key:
+                letter, accidental, octave = key.groups()
+                letter = letter.upper()
+                # 沿用谱源缺省音区：G、A、B 为第三组，其余为第四组。
+                octave = int(octave) if octave else (3 if letter in "GAB" else 4)
+                base = 12 * (octave + 1) + dict(zip("CDEFGAB", SCALE))[letter]
+                base += {"": 0, "#": 1, "b": -1}[accidental]
+                if not 0 <= base <= 127:
+                    raise ValueError(f"第 {line_number} 行调号超出 MIDI 0～127 的范围。")
+                keys.append(base)
+                events.append(_JianpuEvent("key", base, line_number))
+                index = key.end()
+                continue
+            if mode == "source" and line[index] in ":()~[]":
+                ignored_structure = True
+                index += 1
+                continue
+            if mode == "score":
+                # 避免把常用的紧邻小节线「|1」误读成一房子。
+                symbol = next((symbol for symbol in structures if line.startswith(symbol, index)), None)
+                if symbol:
+                    events.append(_JianpuEvent(structures[symbol], line=line_number))
+                    index += len(symbol)
+                    if symbol == ":|" and line[index:index+1] == ":":
+                        events.append(_JianpuEvent("repeat_start", line=line_number))
+                        index += 1
+                    continue
+            bar = bar_pattern.match(line, index)
+            if bar:
+                index = bar.end()
                 continue
             match = token_pattern.match(line, index)
             if not match:
                 annotation = annotation_pattern.match(line, index)
                 if annotation:
-                    # 谱源允许混入普通字母说明；保留位置提示，不吞掉演奏符号或数字。
                     annotations.append(f"第 {line_number} 行「{annotation[0][:20]}」")
-                    index += len(annotation[0])
+                    index = annotation.end()
                     continue
                 raise ValueError(f"第 {line_number} 行第 {index + 1} 字附近「{line[index:index+16]}」含暂不支持的记谱，请打开源谱校对。")
             accidental, degree, octave, length, dots = match.groups()
@@ -228,42 +315,149 @@ def parse_jianpu_space(text: str, title: str) -> tuple[Song, list[str]]:
                 raise ValueError(f"第 {line_number} 行音符时值超出支持范围。")
             beats = 1 + len(length) if length.startswith("-") else 0.5 ** (2 * length.count("=") + length.count("_"))
             beats *= 2 - 0.5 ** len(dots)
-            end = cursor + beats * 60 / bpm
-            if not tempo_set:
-                used_default_tempo = True
+            offset = 12 * (octave.count("'") - octave.count(","))
+            offset += (accidental or "").count("#") - (accidental or "").count("b")
+            events.append(_JianpuEvent("note", (degree, offset, beats), line_number, source_count))
+            if degree not in ("0", "-"):
+                source_count += 1
+            index = match.end()
+    if key_changes and max(key_changes) >= source_count:
+        raise ValueError("歌词中的转调指令没有对应音符，请核对原谱的歌词占位。")
+    if source_count > 30000:
+        raise ValueError("简谱最多支持 30000 个音符、30 分钟。")
+    if mode == "score":
+        events = _jianpu_repeats(events)
+    base = keys[-1] if keys and mode == "source" else 60
+    state = {"base": base, "bpm": 120.0, "tempo_set": False, "transpose": 0,
+             "key_set": bool(keys) and mode == "source"}
+    notes, slurs = [], []
+    cursor, steps, repeats, ties, phrases = 0.0, 0, 0, 0, 0
+    previous_is_note, can_extend, pending_tie = False, False, False
+    used_default_tempo, used_default_key = False, not keys
+
+    def boundary():
+        if slurs or pending_tie:
+            raise ValueError("连线不能跨越反复跳转或房子边界，请在各段内写完整连线。")
+
+    def perform(items):
+        nonlocal cursor, steps, repeats, ties, phrases, previous_is_note, can_extend, pending_tie
+        nonlocal used_default_tempo, used_default_key
+        for event in items:
+            steps += 1
+            if steps > 120000:
+                raise ValueError("反复展开后的记谱过多，请减少嵌套。")
+            kind, value = event.kind, event.value
+            if kind == "repeat":
+                boundary()
+                snapshot = state.copy()
+                body, first = value
+                repeats += 1
+                for turn in range(2):
+                    state.update(snapshot)
+                    previous_is_note = False
+                    can_extend = False
+                    before = cursor
+                    perform(body)
+                    if cursor == before:
+                        raise ValueError("反复段需要音符或休止符。")
+                    boundary()
+                    if turn == 0 and first is not None:
+                        perform(first)
+                        boundary()
+                continue
+            if kind == "key":
+                if mode == "score":
+                    state["base"] = value
+                    state["key_set"] = True
+                    # 绝对调号开始新段，不继续叠加前一段歌词的相对转调。
+                    state["transpose"] = 0
+                continue
+            if kind == "tempo":
+                state["bpm"], state["tempo_set"] = value, True
+                continue
+            if kind == "slur_start":
+                if len(slurs) >= 8 or pending_tie:
+                    raise ValueError(f"第 {event.line} 行连线嵌套过深或与延音线交叉。")
+                slurs.append((len(notes), cursor))
+                continue
+            if kind == "slur_end":
+                if not slurs or pending_tie:
+                    raise ValueError(f"第 {event.line} 行连线括号不配对或延音线未结束。")
+                start, onset = slurs.pop()
+                group = notes[start:]
+                if not group or abs(group[0].start - onset) > 1e-8 or abs(group[-1].end - cursor) > 1e-8:
+                    raise ValueError(f"第 {event.line} 行连线两端需要音符。")
+                if all(n.pitch == group[0].pitch for n in group):
+                    if any(abs(a.end - b.start) > 1e-8 for a, b in zip(group, group[1:])):
+                        raise ValueError(f"第 {event.line} 行同音延音线不能跨越休止。")
+                    notes[start:] = [replace(group[0], end=group[-1].end, legato=True)]
+                    ties += 1
+                else:
+                    notes[start:] = [replace(n, legato=True) for n in group]
+                    phrases += 1
+                continue
+            if kind == "tie":
+                if pending_tie or not previous_is_note:
+                    raise ValueError(f"第 {event.line} 行延音线 ~ 前需要音符。")
+                pending_tie = True
+                continue
+            degree, offset, beats = value
+            end = cursor + beats * 60 / state["bpm"]
+            used_default_tempo |= not state["tempo_set"]
+            used_default_key |= not state["key_set"]
             if degree == "-":
-                if cursor == 0:
-                    raise ValueError("乐谱不能以延音线开头。")
+                if not can_extend:
+                    raise ValueError("曲首或反复段首不能以延音线开头。")
+                if pending_tie:
+                    raise ValueError(f"第 {event.line} 行 ~ 后需要同音高音符。")
                 if previous_is_note:
-                    last = notes[-1]
-                    notes[-1] = Note(last.start, end, last.pitch)
+                    notes[-1] = replace(notes[-1], end=end)
             elif degree == "0":
+                if pending_tie:
+                    raise ValueError(f"第 {event.line} 行延音线不能连接休止符。")
                 previous_is_note = False
             else:
-                transpose += key_changes.get(len(notes), 0)
-                pitch = base + SCALE[int(degree) - 1] + 12 * (octave.count("'") - octave.count(","))
-                pitch += (accidental or "").count("#") - (accidental or "").count("b")
-                pitch += transpose
+                state["transpose"] += key_changes.get(event.position, 0)
+                pitch = state["base"] + SCALE[int(degree) - 1] + offset + state["transpose"]
                 if not 0 <= pitch <= 127:
-                    raise ValueError(f"第 {line_number} 行音高超出 MIDI 0～127 的范围。")
-                notes.append(Note(cursor, end, pitch))
+                    raise ValueError(f"第 {event.line} 行音高超出 MIDI 0～127 的范围。")
+                if pending_tie:
+                    if notes[-1].pitch != pitch or abs(notes[-1].end - cursor) > 1e-8:
+                        raise ValueError(f"第 {event.line} 行延音线 ~ 只能连接相邻的同音高音符。")
+                    notes[-1] = replace(notes[-1], end=end, legato=True)
+                    pending_tie = False
+                    ties += 1
+                else:
+                    notes.append(Note(cursor, end, pitch))
                 previous_is_note = True
-            cursor, index = end, match.end()
+            cursor = end
+            can_extend = True
             if cursor > 1800 or len(notes) > 30000:
                 raise ValueError("简谱最多支持 30000 个音符、30 分钟。")
+
+    perform(events)
+    if pending_tie or slurs:
+        raise ValueError("连线缺少结束音符或右括号。")
     if not notes:
         raise ValueError("简谱中没有可演奏的音符。")
-    if key_changes and max(key_changes) >= len(notes):
-        raise ValueError("歌词中的转调指令没有对应音符，请核对原谱的歌词占位。")
+    if used_default_tempo:
+        warnings.append("未标速度的部分按 120 BPM 导入，可在编辑器调整。")
+    if used_default_key:
+        warnings.append("未标调号的部分按 1=C4 导入，可在主界面移调。")
     if key_changes:
         warnings.append(f"已按歌词对应音符处理 {len(key_changes)} 处转调。")
+    if len(keys) > 1:
+        warnings.append("已按标记位置处理段落调号。" if mode == "score" else "跟随源站：最后一个 /key 调号用于全曲。")
+    if repeats or ties or phrases:
+        warnings.append(f"按谱面规则：展开 {repeats} 个反复段，处理 {ties} 处同音延音、{phrases} 处连奏。")
+    if ignored_structure:
+        warnings.append("跟随源站：忽略反复、房子和圆弧／~ 连线标记。")
     if annotations:
         warnings.append(f"已忽略 {len(annotations)} 处普通字母：{'、'.join(annotations[:3])}，请对照源谱试听。")
-    if used_default_tempo:
-        warnings.insert(0, "未标速度的部分按 120 BPM 导入，可在编辑器调整。")
     if skipped_chords:
         warnings.append("独立和弦标记不演奏，仅导入简谱主旋律。")
     return Song(title.strip() or "在线简谱", notes, duration=cursor), warnings
+
 
 
 def jianpu_pitch(pitch: int) -> str:
@@ -293,11 +487,16 @@ def song_to_jianpu(song: Song, track: int | str | None = "auto", style="original
         duration = f"{beats:.9f}".rstrip("0").rstrip(".")
         tokens.append(pitch if duration == "1" else f"{pitch}:{duration}")
 
-    for note in melody:
+    for index, note in enumerate(melody):
         start, end = round(note.start*bpm/60, 9), round(note.end*bpm/60, 9)
         if start > cursor:
             append_token("0", start-cursor)
+        if note.legato and (index == 0 or not melody[index-1].legato or start > cursor):
+            tokens.append("(")
         append_token(jianpu_pitch(note.pitch), max(0.000000001, end-start))
+        if note.legato and (index+1 == len(melody) or not melody[index+1].legato
+                            or round(melody[index+1].start*bpm/60, 9) > end):
+            tokens.append(")")
         cursor = end
     end = round(song.duration*bpm/60, 9)
     if end > cursor:
@@ -417,9 +616,9 @@ def monophonic(notes: list[Note]) -> list[Note]:
         if previous is not None and winner is not None and time > previous:
             source = notes[winner]
             if result and last_id == winner and abs(result[-1].end-previous) < 1e-8:
-                result[-1] = Note(result[-1].start, time, source.pitch, source.track)
+                result[-1] = replace(source, start=result[-1].start, end=time)
             else:
-                result.append(Note(previous, time, source.pitch, source.track))
+                result.append(replace(source, start=previous, end=time))
             last_id = winner
         for on, index in events[time]:
             if on:
@@ -476,7 +675,7 @@ def piano_melody(notes: list[Note]) -> list[Note]:
                     (note.start-previous.start < 0.040 and previous.end-previous.start >= 0.1)):
                 result.pop()
             else:
-                result[-1] = Note(previous.start, note.start, previous.pitch, previous.track)
+                result[-1] = replace(previous, end=note.start)
         result.append(note)
     return result
 
@@ -488,7 +687,7 @@ def bridge_short_gaps(notes: list[Note]) -> tuple[list[Note], int]:
             gap = notes[index+1].start-note.end
             # 仅连接短间隙，保留长休止和明显的短促奏法。
             if 1e-8 < gap <= min(0.120, (note.end-note.start)*0.35):
-                note = Note(note.start, notes[index+1].start, note.pitch, note.track)
+                note = replace(note, end=notes[index+1].start)
                 count += 1
         result.append(note)
     return result, count
@@ -563,8 +762,8 @@ def compile_plan(song: Song, mapping: Mapping, track: int | str | None = None, s
         for start, end in segments:
             for note in melody:
                 if note.start < end and note.end > start:
-                    selected.append(Note(duration+max(note.start, start)-start,
-                                         duration+min(note.end, end)-start, note.pitch, note.track))
+                    selected.append(replace(note, start=duration+max(note.start, start)-start,
+                                            end=duration+min(note.end, end)-start))
             source_count += sum(note.start < end and note.end > start for note in source)
             duration += end-start
         melody = selected
@@ -580,7 +779,7 @@ def compile_plan(song: Song, mapping: Mapping, track: int | str | None = None, s
                 raise ValueError(f"当前映射无法演奏 {pitch_name(pitch)}，请调整鼠标半音／八度设置。")
             fingering = lookup[min(candidates, key=lambda p: (abs(p-pitch), p))]
             folded += 1
-        result.append(PlayNote(note.start/speed, note.end/speed, pitch, fingering))
+        result.append(PlayNote(note.start/speed, note.end/speed, pitch, fingering, note.legato))
     return Plan(result, duration/speed, folded, source_count, style, cleaned, bridged, track)
 
 

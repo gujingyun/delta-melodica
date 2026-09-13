@@ -9,9 +9,9 @@ import webbrowser
 from resource_search import SOURCES, SearchCancelled, download_resource, search_all, search_url
 
 
-def _download_worker(song, folder, mapping, cancel, events, preview):
+def _download_worker(song, folder, mapping, cancel, events, preview, mode):
     try:
-        path = download_resource(song, folder, mapping, cancel)
+        path = download_resource(song, folder, mapping, cancel, jianpu_mode=mode)
         events.put(("download", (song, path, preview, None)))
     except SearchCancelled:
         pass
@@ -35,6 +35,7 @@ class ResourceSearchDialog:
         self.dialog.minsize(860, 630)
         self.dialog.protocol("WM_DELETE_WINDOW", self.close)
         self.query = tk.StringVar(value=query)
+        self.rule_mode = tk.StringVar(value="按谱面规则")
         self.status = tk.StringVar(value="输入曲名或歌手，默认搜索简谱；也可勾选 MIDI 来源。支持繁简体曲名匹配。")
         self.detail = tk.StringVar(value="简谱按音符和时值导入，先试听、再按 F8 演奏；未标速度或调号时会提示默认值。")
         self.source_summary = tk.StringVar(value="")
@@ -53,8 +54,15 @@ class ResourceSearchDialog:
         tk.Label(heading, text="搜一首，加入你的曲库", bg=CARD, fg=TEXT,
                  font=("Microsoft YaHei UI", 16, "bold")).pack(side="left")
         ttk.Button(heading, text="浏览官网精选", command=self.browse_official, style="Quiet.TButton").pack(side="right")
-        tk.Label(dialog, text="搜曲名 → 导入简谱 → 试听 / 编辑 → F8 演奏 · 保存后可离线使用", bg=CARD,
-                 fg=MUTED).pack(anchor="w", padx=22, pady=(0, 14))
+        options = tk.Frame(dialog, bg=CARD)
+        options.pack(fill="x", padx=22, pady=(0, 10))
+        tk.Label(options, text="搜曲名 → 导入 → 试听 / 编辑 → F8 演奏", bg=CARD,
+                 fg=MUTED).pack(side="left")
+        self.rule_combo = ttk.Combobox(options, textvariable=self.rule_mode, width=16, state="readonly",
+                                       values=("按谱面规则", "跟随源站播放"))
+        self.rule_combo.pack(side="right")
+        self.rule_combo.bind("<<ComboboxSelected>>", self.select)
+        tk.Label(options, text="简谱规则：", bg=CARD, fg=MUTED).pack(side="right")
         search = tk.Frame(dialog, bg=CARD)
         search.pack(fill="x", padx=22)
         self.entry = ttk.Entry(search, textvariable=self.query)
@@ -129,13 +137,16 @@ class ResourceSearchDialog:
         self.more_button.configure(state="normal" if self.more and not self.pending and not self.downloading else "disabled")
         self.search_button.configure(state="disabled" if self.downloading else "normal")
         self.cancel_button.configure(state="normal" if self.pending else "disabled")
+        self.rule_combo.configure(state="disabled" if self.downloading else "readonly")
 
     def select(self, event=None):
         song = self.selected()
         if song:
             condition = "可直接下载，自动转换后加入曲库。" if song.downloadable else "需到 MidiShow 登录并按积分规则下载，再点击“导入已下载 MIDI”。"
             if song.source == "jianpu":
-                condition = "直接读取文字简谱，保留节奏、休止与重复音。未标速度按 120 BPM、未标调号按 1=C4 导入；可试听和编辑。"
+                condition = ("按谱面展开反复、一二房子，处理同音延音、连奏和段落调号。" if self.rule_mode.get() == "按谱面规则"
+                             else "跟随源站：忽略反复和圆弧／~ 连线；最后一个调号用于全曲。")
+                condition += "未标速度按 120 BPM，未标调号按 1=C4；导入后可试听、编辑。"
             self.detail.set(f"{song.title} · {SOURCES[song.source]}\n{condition}")
         self._buttons()
 
@@ -196,7 +207,8 @@ class ResourceSearchDialog:
         self.status.set(f"正在读取并导入简谱“{song.title}”…" if song.source == "jianpu" else f"正在下载并转换“{song.title}”…")
         self._buttons()
         threading.Thread(target=_download_worker, args=(song, self.library_dir, self.app.mapping(),
-                                                        self.download_cancel, self.events, preview), daemon=True).start()
+                                                        self.download_cancel, self.events, preview,
+                                                        "score" if self.rule_mode.get() == "按谱面规则" else "source"), daemon=True).start()
 
     def _poll(self):
         if self.closed:
