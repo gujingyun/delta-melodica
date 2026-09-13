@@ -66,6 +66,7 @@ public final class AccountActivity extends Activity {
             button(mode.equals("login") ? "登录" : mode.equals("register") ? "验证邮箱并注册" : "验证邮箱并重置密码", this::submit);
             text("注册后，本机游客曲谱自动归入此账号并上传到私有云端。原文件保留为本机备份。", 13);
         }
+        button("权限与数据说明", () -> startActivity(new android.content.Intent(this, DataInfoActivity.class)));
         status = text("", 14); button("返回本地曲库", () -> {setResult(RESULT_OK); finish();});
     }
     private interface Work {String run() throws Exception;}

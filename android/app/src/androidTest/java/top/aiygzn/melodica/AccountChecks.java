@@ -74,10 +74,33 @@ public final class AccountChecks extends Instrumentation {
                 try (FileOutputStream output = new FileOutputStream(screenshot)) {bitmap.compress(Bitmap.CompressFormat.PNG, 100, output);}
                 bitmap.recycle(); report.append("通过：注册页面展示与截图\n");
             } finally {runOnMainSync(activity::finish);}
+            MainActivity main = (MainActivity) startActivitySync(new Intent(getTargetContext(), MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            try {
+                waitForIdleSync(); SystemClock.sleep(500); saveScreen("release-main.png");
+                ActivityMonitor infoMonitor = addMonitor(DataInfoActivity.class.getName(), null, false);
+                runOnMainSync(() -> {
+                    View info = find(main.getWindow().getDecorView(), "权限与数据说明");
+                    check(info != null, "主界面缺少权限与数据说明"); info.performClick();
+                });
+                Activity information = waitForMonitorWithTimeout(infoMonitor, 3000); removeMonitor(infoMonitor);
+                check(information != null, "权限与数据说明页面未打开");
+                try {
+                    waitForIdleSync(); SystemClock.sleep(500);
+                    check(find(information.getWindow().getDecorView(), "权限与数据说明") != null, "说明页面标题缺失");
+                    saveScreen("release-data-information.png");
+                } finally {runOnMainSync(information::finish);}
+                report.append("通过：正式版主界面、离线权限与数据说明入口及截图\n");
+            } finally {runOnMainSync(main::finish);}
         } catch (Throwable error) {status = Activity.RESULT_CANCELED; report.append("失败：").append(android.util.Log.getStackTraceString(error));}
         result.putString("stream", report.toString()); finish(status, result);
     }
     private static void check(boolean ok, String message) {if (!ok) throw new AssertionError(message);}
+    private void saveScreen(String name) throws Exception {
+        Bitmap bitmap = getUiAutomation().takeScreenshot(); check(bitmap != null, "截图失败");
+        try (FileOutputStream output = new FileOutputStream(new File(getTargetContext().getExternalFilesDir(null), name))) {
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, output);
+        } finally {bitmap.recycle();}
+    }
     private static void remove(File target) throws Exception {
         if (target.isDirectory()) for (File child : target.listFiles()) remove(child);
         java.nio.file.Files.deleteIfExists(target.toPath());

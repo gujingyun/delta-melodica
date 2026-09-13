@@ -7,10 +7,30 @@ android {
         applicationId 'top.aiygzn.melodica'
         minSdk 26
         targetSdk 34
-        versionCode 5
-        versionName '0.5.0-preview'
+        versionCode 6
+        versionName '0.6.0'
         testInstrumentationRunner project.findProperty('testRunner') ?: 'top.aiygzn.melodica.GestureSmokeTest'
     }
+    buildFeatures { buildConfig true }
+    // 正式凭据只从构建进程环境传入，禁止回退到调试签名。
+    signingConfigs {
+        release {
+            if (System.getenv('MELODICA_KEYSTORE')) {
+                storeFile file(System.getenv('MELODICA_KEYSTORE'))
+                storePassword System.getenv('MELODICA_STORE_PASSWORD')
+                keyAlias 'delta-melodica'
+                keyPassword System.getenv('MELODICA_STORE_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        debug { versionNameSuffix '-preview' }
+        release {
+            debuggable false
+            signingConfig signingConfigs.release
+        }
+    }
+    testBuildType project.findProperty('testBuildType') ?: 'debug'
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17

@@ -90,7 +90,8 @@ public final class MainActivity extends Activity {
             if (MelodicaService.instance != null) { MelodicaService.instance.stop(); MelodicaService.instance.hidePanel(); }
             updateStatus(); toast(serviceEnabled() ? "已停止并隐藏，保留无障碍授权" : "已停止并隐藏悬浮窗");
         }, false);
-        text(content, "预览版 0.5  ·  Android 8.0+\n日常停止保留无障碍授权。线上曲库、12 点校准及音区切换优化继续可用；演奏期间禁用收起。", 11, 0xff789795);
+        action(content, "权限与数据说明", () -> startActivity(new Intent(this, DataInfoActivity.class)), false);
+        text(content, "v" + BuildConfig.VERSION_NAME + "  ·  Android 8.0+\n支持官网 MIDI / JSON 曲谱及账号云同步。日常停止保留无障碍授权；演奏期间禁用收起。", 11, 0xff789795);
         songs.setOnItemSelectedListener(listener(this::selectSong));
         refreshLibrary(); updateStatus();
     }

@@ -16,15 +16,19 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-/** 官网公开目录及 MIDI 下载；不发送本地曲谱或设置。 */
+/** 官网公开目录及 MIDI／JSON 曲谱下载；不发送本地曲谱或设置。 */
 public final class OnlineLibrary {
     public static final String CATALOG_URL = "https://aiygzn.top/melodica/songs.json";
     static final int MAX_CATALOG_BYTES = 1024 * 1024, MAX_SONG_BYTES = 10 * 1024 * 1024;
     public static final class Song {
-        public final String id, title, artist, description, url, sha256;
+        public final String id, title, artist, description, url, sha256, format;
         public final long size;
         Song(String id, String title, String artist, String description, String url, long size, String sha256) {
+            this(id, title, artist, description, url, size, sha256, "midi");
+        }
+        Song(String id, String title, String artist, String description, String url, long size, String sha256, String format) {
             this.id = id; this.title = title; this.artist = artist; this.description = description; this.url = url; this.size = size; this.sha256 = sha256;
+            this.format = format;
         }
     }
     private OnlineLibrary() { }
@@ -40,6 +44,8 @@ public final class OnlineLibrary {
             if (!id.matches("[A-Za-z0-9][A-Za-z0-9._-]*") || !ids.add(id)) throw new IOException("目录曲目标识无效或重复");
             String title = text(item, "title", 100, true), artist = text(item, "artist", 100, false), description = text(item, "description", 300, false);
             String url = checkedUrl(URI.create(CATALOG_URL).resolve(text(item, "url", 500, true)).toString()).toString();
+            String format = item.isNull("format") ? "midi" : text(item, "format", 10, true);
+            if (!format.equals("midi") && !format.equals("score")) throw new IOException("目录曲谱格式不支持：" + format);
             long size = -1;
             if (!item.isNull("size")) {
                 Object value = item.get("size");
@@ -49,7 +55,7 @@ public final class OnlineLibrary {
             }
             String hash = text(item, "sha256", 64, false).toLowerCase(Locale.ROOT);
             if (!item.isNull("sha256") && !hash.matches("[a-f0-9]{64}")) throw new IOException("目录 SHA-256 无效");
-            result.add(new Song(id, title, artist, description, url, size, hash));
+            result.add(new Song(id, title, artist, description, url, size, hash, format));
         }
         return result;
     }
@@ -70,8 +76,13 @@ public final class OnlineLibrary {
     public static Score download(Song song) throws Exception { return decode(song, fetch(song.url, MAX_SONG_BYTES)); }
     static Score decode(Song song, byte[] bytes) throws Exception {
         checkCancelled();
-        if (bytes.length > MAX_SONG_BYTES || (song.size >= 0 && bytes.length != song.size)) throw new IOException("MIDI 文件大小校验失败");
-        if (!song.sha256.isEmpty() && !digest(bytes).equalsIgnoreCase(song.sha256)) throw new IOException("MIDI 文件 SHA-256 校验失败");
+        if (bytes.length > MAX_SONG_BYTES || (song.size >= 0 && bytes.length != song.size)) throw new IOException("曲谱文件大小校验失败");
+        if (!song.sha256.isEmpty() && !digest(bytes).equalsIgnoreCase(song.sha256)) throw new IOException("曲谱文件 SHA-256 校验失败");
+        if (song.format.equals("score")) {
+            Score score = CloudScore.decode(new JSONObject(new String(bytes, StandardCharsets.UTF_8)));
+            return new Score(song.title, score.notes, score.duration);
+        }
+        if (!song.format.equals("midi")) throw new IOException("不支持此曲谱格式");
         return MidiReader.read(bytes, song.title);
     }
     static String digest(byte[] bytes) throws Exception {
@@ -109,7 +120,7 @@ public final class OnlineLibrary {
             if (System.nanoTime() >= deadline) throw new IOException("网络请求超时，请重试");
             HttpURLConnection connection = (HttpURLConnection) url.toURL().openConnection();
             connection.setConnectTimeout(8000); connection.setReadTimeout(10000); connection.setInstanceFollowRedirects(false);
-            connection.setRequestProperty("User-Agent", "DeltaMelodicaAndroid/0.3"); connection.setRequestProperty("Accept-Encoding", "identity");
+            connection.setRequestProperty("User-Agent", "DeltaMelodicaAndroid/" + BuildConfig.VERSION_NAME); connection.setRequestProperty("Accept-Encoding", "identity");
             try {
                 int code = connection.getResponseCode();
                 if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {

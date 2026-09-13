@@ -37,7 +37,7 @@ public final class OnlineLibraryActivity extends Activity {
         super.onCreate(state); library = new Library(this);
         LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setPadding(dp(20), dp(18), dp(20), dp(12)); setContentView(root);
         TextView title = label(root, "线上曲库", 26); title.setTextColor(0xff66e3ac);
-        label(root, "官网 MIDI · 下载到本地后可离线演奏", 13);
+        label(root, "官网 MIDI / JSON 曲谱 · 下载后可离线演奏", 13);
         search = new EditText(this); search.setSingleLine(true); search.setHint("搜索曲名或作者"); root.addView(search);
         status = label(root, "正在读取目录…", 13);
         list = new ListView(this); list.setDividerHeight(dp(1)); root.addView(list, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -70,7 +70,7 @@ public final class OnlineLibraryActivity extends Activity {
         int pages = Math.max(1, (filtered.size() + PAGE_SIZE - 1) / PAGE_SIZE); page = Math.max(0, Math.min(page, pages - 1));
         visible = new ArrayList<>(filtered.subList(page * PAGE_SIZE, Math.min(filtered.size(), (page + 1) * PAGE_SIZE)));
         List<String> rows = new ArrayList<>();
-        for (OnlineLibrary.Song song : visible) rows.add(song.title + "\n" + (song.artist.isEmpty() ? "MIDI" : song.artist)
+        for (OnlineLibrary.Song song : visible) rows.add(song.title + "\n" + (song.artist.isEmpty() ? (song.format.equals("score") ? "JSON 曲谱" : "MIDI") : song.artist)
             + " · " + (song.size > 0 ? String.format(Locale.ROOT, "%.1f KB · ", song.size / 1024.0) : "")
             + (library.hasOnline(song.id) ? "已下载 · 点选使用" : "点选下载"));
         list.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, rows) {
@@ -98,7 +98,7 @@ public final class OnlineLibraryActivity extends Activity {
     private void showSong(OnlineLibrary.Song song) {
         boolean downloaded = library.hasOnline(song.id);
         String detail = (song.artist.isEmpty() ? "" : "作者：" + song.artist + "\n") + (song.description.isEmpty() ? "" : song.description + "\n\n")
-            + (downloaded ? "已保存在本地，选用后可调速、移调和选择音轨。" : "下载并选用这首 MIDI，之后无需联网即可演奏。");
+            + (downloaded ? "已保存在本地，选用后可调速、移调和选择音轨。" : "下载并选用这首曲谱，之后无需联网即可演奏。");
         new AlertDialog.Builder(this).setTitle(song.title).setMessage(detail)
             .setPositiveButton(downloaded ? "使用已下载曲目" : "下载并选用", (dialog, which) -> download(song))
             .setNegativeButton("取消", null).show();

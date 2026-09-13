@@ -65,6 +65,30 @@ public class OnlineLibraryTest {
             assertThrows(java.io.InterruptedIOException.class, () -> OnlineLibrary.readLimited(new ByteArrayInputStream(new byte[1]), 8, Long.MAX_VALUE));
         } finally { Thread.interrupted(); }
     }
+    @Test public void downloadsScoreJsonWithExactTimingAndCatalogTitle() throws Exception {
+        JSONObject value = CloudScore.encode(Score.jianpu("1 0:1/2 #4:1/2 +1:2", 120, "文件标题"));
+        byte[] bytes = value.put("source", new JSONObject().put("text", "可编辑原谱")).toString().getBytes(StandardCharsets.UTF_8);
+        JSONObject row = item("json-song", "目录标题").put("url", "songs/example.json").put("format", "score")
+            .put("size", bytes.length).put("sha256", OnlineLibrary.digest(bytes));
+        Score result = OnlineLibrary.decode(catalog(row).get(0), bytes);
+        assertEquals("目录标题", result.title); assertEquals(2000, result.duration);
+        assertEquals(3, result.notes.size()); assertEquals(750, result.notes.get(1).start);
+        assertEquals(1000, result.notes.get(1).end); assertEquals(66, result.notes.get(1).pitch);
+        assertEquals(72, result.notes.get(2).pitch);
+        Library library = new Library(temporary.newFolder());
+        assertEquals(result.duration, library.read(library.saveOnline("json-song", result)).duration);
+    }
+    @Test public void rejectsInvalidScoreJsonAndFormatMismatch() throws Exception {
+        JSONObject row = item("json-song", "曲谱").put("format", "score");
+        byte[] invalid = "{\"version\":1,\"title\":\"坏谱\",\"duration\":500,\"notes\":[[0,501,60,0]]}".getBytes(StandardCharsets.UTF_8);
+        assertThrows(Exception.class, () -> OnlineLibrary.decode(catalog(row).get(0), invalid));
+        assertThrows(Exception.class, () -> OnlineLibrary.decode(catalog(row).get(0), midi()));
+        byte[] valid = CloudScore.encode(Score.jianpu("1", 120, "曲谱")).toString().getBytes(StandardCharsets.UTF_8);
+        assertThrows(Exception.class, () -> OnlineLibrary.decode(catalog(item("midi-song", "MIDI")).get(0), valid));
+        assertThrows(Exception.class, () -> OnlineLibrary.decode(catalog(row.put("sha256", "0".repeat(64))).get(0), valid));
+        assertThrows(Exception.class, () -> catalog(item("unknown", "曲谱").put("format", "html")));
+        assertThrows(Exception.class, () -> catalog(item("unknown", "曲谱").put("format", 1)));
+    }
     @Test public void downloadsHaveStableLocalIdsAndKeepImportedSongs() throws Exception {
         java.io.File folder = temporary.newFolder(); Library library = new Library(folder);
         Score score = Score.jianpu("1 2 3", 120, "下载测试");

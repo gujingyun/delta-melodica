@@ -1,4 +1,23 @@
-# 三角洲口风琴 · 安卓预览版
+# 三角洲口风琴 · 安卓版
+
+## v0.6.0 官网上线准备（尚未发布）
+
+本版按官网直接下载 APK 准备，支持 Android 8.0+，包名 `top.aiygzn.melodica`，版本号 `0.6.0`／6。修复公开曲库 JSON 曲谱下载，保留 MIDI 校验、下载去重及离线演奏；新增离线「权限与数据说明」。账号服务于 2026-09-14 通过公开 HTTPS 健康检查，以下开发预览记录中的「尚待部署」为历史状态。
+
+正式构建使用仓库外的独立 RSA 签名，不接受调试证书或可调试 APK。首次在本机生成签名后，所有后续正式版必须复用此密钥：
+
+```powershell
+.\init-signing.ps1 -JavaHome '你的 JDK 21 目录'
+.\build.ps1 -Configuration Release -WithDeviceTests -JavaHome '你的 JDK 21 目录' -SdkRoot '你的 Android SDK 目录'
+```
+
+默认签名资料位于 `%LOCALAPPDATA%\DeltaMelodicaSigning\android`，密码以 Windows DPAPI 加密，仅当前 Windows 用户可解密。不要提交、发布或自动重建密钥；上线前需另外制作可信的加密备份，单独复制 `password.clixml` 到其他电脑不能恢复密码。官方签名说明见 [Android 文档](https://developer.android.com/studio/publish/app-signing)。
+
+脚本清理构建后执行 Release 单元测试、Lint、APK 签名和不可调试检查，输出 `dist/delta-melodica-android-v0.6.0.apk`、SHA-256 文件和构建元数据。`-WithDeviceTests` 另外生成本地测试 APK，不混入交付目录。默认 Debug 构建输出 `delta-melodica-android-v0.6.0-preview.apk`，仅供开发测试。
+
+旧 v0.5 等预览包与正式包签名不同，不能直接覆盖安装。先在旧包中同步曲库并在官网核对，或保留可重新导入的原始文件，再卸载旧包并安装正式包；本机设置和校准需重新配置。未同步且没有原始文件的曲谱不要先卸载。后续同签名正式版可以覆盖升级。此候选包的实测、发布材料和待确认项见 [上线准备记录](docs/上线准备-v0.6.0.md)。安卓源码仍遵守本机暂不公开的保护规则，APK 官网发布与源码公开分开处理。
+
+## 历史开发记录
 
 ## 邮箱账号与云端曲库（开发预览）
 

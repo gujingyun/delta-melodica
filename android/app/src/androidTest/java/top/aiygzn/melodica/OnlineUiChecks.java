@@ -32,8 +32,8 @@ final class OnlineUiChecks {
             open(); await(() -> !(Boolean) field(online, "busy"), 35000, "官网目录请求未结束");
             List<OnlineLibrary.Song> real = songs("catalog"); check(!real.isEmpty(), "官网目录未读取成功：" + ((TextView) field(online, "status")).getText());
             saveScreen("online-catalog-v03.png");
-            for (OnlineLibrary.Song song : real) check(!OnlineLibrary.download(song).notes.isEmpty(), "官网 MIDI 无法解析：" + song.title);
-            pass("官网目录及当前 " + real.size() + " 首 MIDI 的大小、SHA-256 和解析验证");
+            for (OnlineLibrary.Song song : real) check(!OnlineLibrary.download(song).notes.isEmpty(), "官网曲谱无法解析：" + song.title);
+            pass("官网目录及当前 " + real.size() + " 首 MIDI／JSON 曲谱的大小、SHA-256 和解析验证");
 
             test.runOnMainSync(() -> ((EditText) field(online, "search")).setText("不存在的测试曲目"));
             check(songs("visible").isEmpty() && !((View) field(online, "next")).isEnabled(), "无匹配搜索结果错误");
