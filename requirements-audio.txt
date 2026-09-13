@@ -9,4 +9,5 @@ numpy==2.2.6
 scipy==1.15.3
 resampy==0.4.2
 soundfile==0.13.1
-setuptools==70.3.0
+setuptools==80.9.0
+backports.tarfile==1.2.0
