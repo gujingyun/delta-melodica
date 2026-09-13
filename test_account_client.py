@@ -83,7 +83,8 @@ class DesktopAccountTests(unittest.TestCase):
         self.client.claim_guest()
         first_dir = self.client.library_dir
         self.client.logout()
-        self.assertFalse(self.client.visible(self.client.library_dir / "legacy__游客曲谱.json"))
+        self.assertTrue((self.client.library_dir / "legacy__游客曲谱.json").is_file())
+        self.assertEqual(self.client.guest_files(), [])
         self.register("second@example.com")
         self.assertEqual(self.client.claim_guest(), 0)
         self.assertNotEqual(self.client.library_dir, first_dir)
@@ -171,14 +172,17 @@ class DesktopAccountTests(unittest.TestCase):
         self.assertEqual(score_id(cloud), score_id(from_song(to_song(cloud))))
         self.assertEqual(len(cloud["notes"]), 3)
 
-    def test_account_dialog_renders_and_registers_in_background(self):
+    def test_account_dialog_registers_and_logout_restores_guest_library(self):
         from app import App
         root = tk.Tk()
         app = App(root, self.root / "ui", smoke=True)
         try:
             app.account.opener = LocalAPI(self.api)
             app.account.api_url = "https://example.com"
-            atomic_json(app.library_dir / "test.json", {"title": "界面测试", "bpm": 100, "score": "1 2 3"})
+            guest_dir = app.library_dir
+            guest_path = guest_dir / "test.json"
+            atomic_json(guest_path, {"title": "界面测试", "bpm": 100, "score": "1 2 3"})
+            original = guest_path.read_bytes()
             panel = app.account_ui
             panel.show(); root.update()
             panel.mode.set("register"); panel.update_form()
@@ -191,6 +195,21 @@ class DesktopAccountTests(unittest.TestCase):
             self.assertEqual(app.library_dir, app.account.library_dir)
             self.assertIn("同步完成", panel.message.get())
             self.assertEqual(len(app.account.request("GET", "/library/songs")["songs"]), 1)
+            private_path = app.library_dir / "private.json"
+            atomic_json(private_path, {"title": "账号专属曲谱", "bpm": 100, "score": "3 4 5"})
+            panel.refresh_profile()
+            self.assertIn(("file", private_path), [source for _, source in app.entries])
+            panel.run(app.account.logout, panel.logged_out)
+            self.wait_ui(root, panel)
+            self.assertIsNone(app.account.user)
+            self.assertEqual(app.library_dir, guest_dir)
+            self.assertEqual([source for _, source in app.entries if source[0] == "file"], [("file", guest_path)])
+            app._load_library(guest_path)
+            self.assertEqual(app.current_source, ("file", guest_path))
+            self.assertEqual(len(app.plan.notes), 3)
+            self.assertEqual(guest_path.read_bytes(), original)
+            self.assertTrue(private_path.is_file())
+            self.assertEqual(app.account.guest_files(), [])
         finally:
             app.close()
             del panel, app, root
