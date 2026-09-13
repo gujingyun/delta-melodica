@@ -149,6 +149,7 @@ class AccountPanel:
         if app.library_dir != self.client.library_dir:
             app.stop("切换账号曲库")
             app._close_online_library_dialog()
+            app.close_audio_dialog()
             app.library_dir = self.client.library_dir
             app.online_downloaded_ids.clear()
             try:
