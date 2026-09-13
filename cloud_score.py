@@ -10,7 +10,7 @@ MAX_SCORE_BYTES = 2 * 1024 * 1024
 
 def normalize_score(value):
     """严格校验交换格式，不把服务器数据直接交给播放器。"""
-    if not isinstance(value, dict) or value.get("version") != 1:
+    if not isinstance(value, dict) or type(value.get("version")) is not int or value["version"] != 1:
         raise ValueError("不支持的云端曲谱版本")
     title, duration, notes = value.get("title"), value.get("duration"), value.get("notes")
     if not isinstance(title, str) or not title.strip() or len(title) > 100 or any(ord(c) < 32 for c in title):

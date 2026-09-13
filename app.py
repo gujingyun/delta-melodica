@@ -28,6 +28,9 @@ from tray import Tray
 from win_input import (Hotkeys, PreviewOutput, WindowsOutput, foreground, target_matches,
                        matching_windows, process_elevated, permission_problem, restart_as_admin,
                        activate_window, window_info, root_window)
+from account_client import AccountClient
+from account_ui import AccountPanel
+from cloud_score import to_song
 
 BG = "#11191d"
 CARD = "#1b272d"
@@ -106,7 +109,9 @@ class App:
     def __init__(self, root, data_dir, smoke=False, game_test=False):
         self.root, self.data_dir, self.smoke = root, Path(data_dir), smoke
         self.game_test_pending = game_test
-        self.library_dir = self.data_dir / "songs"
+        self.account = AccountClient(self.data_dir)
+        self.account_ui = AccountPanel(self)
+        self.library_dir = self.account.library_dir
         self.library_dir.mkdir(parents=True, exist_ok=True)
         self.log = logging.getLogger(f"melodica.{id(self)}")
         self.log.setLevel(logging.INFO)
@@ -133,7 +138,7 @@ class App:
             self.load_error = f"设置读取失败，已使用默认值：{error}"
         self.song_preferences = {}
         try:
-            saved = json.loads((self.data_dir / "song-settings.json").read_text(encoding="utf-8"))
+            saved = json.loads((self.account.profile_dir / "song-settings.json").read_text(encoding="utf-8"))
             if not isinstance(saved, dict):
                 raise ValueError("曲目设置格式不正确")
             self.song_preferences = saved
@@ -263,7 +268,9 @@ class App:
         sidebar.pack(side="left", fill="y", padx=(0, 18))
         sidebar.pack_propagate(False)
         tk.Label(sidebar, text="我的曲库", bg=CARD, fg=TEXT, font=("Microsoft YaHei UI", 13, "bold")).pack(anchor="w", padx=18, pady=(20, 6))
-        tk.Label(sidebar, text="示例旋律与本地 MIDI", bg=CARD, fg=MUTED).pack(anchor="w", padx=18, pady=(0, 14))
+        tk.Label(sidebar, textvariable=self.account_ui.caption, bg=CARD, fg=MUTED,
+                 wraplength=220).pack(anchor="w", padx=18, pady=(0, 8))
+        ttk.Button(sidebar, text="账号 / 云端同步", command=self.account_ui.show).pack(fill="x", padx=18, pady=(0, 10))
         self.library = tk.Listbox(sidebar, bg=CARD, fg=TEXT, selectbackground="#354a38", selectforeground=ACCENT,
                                   highlightthickness=0, bd=0, activestyle="none", exportselection=False,
                                   font=("Microsoft YaHei UI", 11), height=10)
@@ -648,7 +655,7 @@ class App:
     def _load_library(self, select_path=None):
         self.entries = [(name, ("demo", name)) for name in DEMO_SCORES]
         for path in sorted(self.library_dir.iterdir()):
-            if path.suffix.lower() in (".mid", ".midi", ".json"):
+            if path.suffix.lower() in (".mid", ".midi", ".json") and self.account.visible(path):
                 self.entries.append((path.stem.split("__", 1)[-1], ("file", path)))
         self.library.delete(0, "end")
         selected = 0
@@ -674,8 +681,12 @@ class App:
                 hint = f"示例曲 · {bpm} BPM"
             elif source[1].suffix.lower() == ".json":
                 data = json.loads(source[1].read_text(encoding="utf-8"))
-                song = parse_jianpu(data["score"], float(data["bpm"]), data["title"])
-                hint = f"自定义简谱 · {data['bpm']} BPM"
+                if data.get("version") == 1:
+                    song = to_song(data)
+                    hint = "云端曲谱 · 可离线演奏"
+                else:
+                    song = parse_jianpu(data["score"], float(data["bpm"]), data["title"])
+                    hint = f"自定义简谱 · {data['bpm']} BPM"
             else:
                 song = read_midi(source[1])
                 song.title = name
@@ -746,7 +757,7 @@ class App:
             "track": self.track_ids[self.track_combo.current()], "style": PLAY_STYLES[self.arrangement.get()],
             "segments": self.segments,
         }
-        destination = self.data_dir / "song-settings.json"
+        destination = self.account.profile_dir / "song-settings.json"
         try:
             temporary = destination.with_suffix(".tmp")
             temporary.write_text(json.dumps(candidate, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1228,7 +1239,7 @@ class App:
         candidate = self.song_preferences.copy()
         candidate.pop(preference_key, None)
         try:
-            destination = self.data_dir / "song-settings.json"
+            destination = self.account.profile_dir / "song-settings.json"
             temporary = destination.with_suffix(".tmp")
             temporary.write_text(json.dumps(candidate, ensure_ascii=False, indent=2), encoding="utf-8")
             temporary.replace(destination)
@@ -1263,6 +1274,9 @@ class App:
             self.play(preview)
 
     def play(self, preview=False):
+        if self.account_ui.dialog:
+            self.detail.set("请先返回本地曲库，再开始演奏。")
+            return
         if self.seeking or self.root.grab_current():
             return
         self.transport_revision += 1
@@ -1394,7 +1408,9 @@ class App:
                         continue
                     if self.player.cancel.is_set() and kind != "done":
                         continue
-                if kind == "toggle":
+                if kind == "account_result":
+                    self.account_ui.accept(value)
+                elif kind == "toggle":
                     self.log.info("收到 F8 热键；当前忙碌=%s", self.busy)
                     self.overlay.toggle_play()
                 elif kind == "overlay":

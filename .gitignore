@@ -15,3 +15,4 @@ releases/
 server/.env
 server/*.env
 otp-secret
+node_modules/
