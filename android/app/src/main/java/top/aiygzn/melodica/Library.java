@@ -15,7 +15,8 @@ import java.util.UUID;
 /** 保存解析后的曲谱副本，文件选择器中的原始文件保持原样。 */
 public final class Library {
     private final File folder;
-    public Library(Context context) { this(new File(context.getFilesDir(), "songs")); }
+    private Account account;
+    public Library(Context context) { this(new File(new Account(context).profile(), "songs")); account = new Account(context); }
     Library(File folder) { this.folder = folder; folder.mkdirs(); }
     public static final class Entry {
         public final String id, title;
@@ -26,6 +27,7 @@ public final class Library {
         List<Entry> entries = new ArrayList<>(); entries.add(new Entry("demo", "小星星 · 内置"));
         File[] files = folder.listFiles((dir, name) -> name.endsWith(".json"));
         if (files != null) for (File file : files) {
+            if (account != null && !account.signedIn() && !account.guestVisible(file.getName())) continue;
             try { entries.add(new Entry(file.getName(), object(file).getString("title"))); }
             catch (Exception ignored) { /* 损坏的曲谱不会阻止打开其余曲库。 */ }
         }
@@ -57,6 +59,10 @@ public final class Library {
     public boolean hasOnline(String songId) { return new File(folder, onlineId(songId)).isFile(); }
     public String saveOnline(String songId, Score score) throws Exception {
         OnlineLibrary.checkCancelled(); return save(score, onlineId(songId));
+    }
+    public String saveCloud(String songId, Score score) throws Exception {
+        if (!songId.matches("[a-f0-9]{64}")) throw new IllegalArgumentException("云端曲目标识无效");
+        return save(score, songId + ".json");
     }
     private String save(Score score, String id) throws Exception {
         JSONArray notes = new JSONArray();

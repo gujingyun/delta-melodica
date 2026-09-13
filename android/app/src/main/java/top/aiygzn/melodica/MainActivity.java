@@ -54,6 +54,7 @@ public final class MainActivity extends Activity {
         TextView eyebrow = text(content, "DELTA MELODICA  /  ANDROID", 11, 0xff66e3ac); eyebrow.setLetterSpacing(.12f);
         TextView title = text(content, "三角洲口风琴", 30, Color.WHITE); title.setTypeface(null, Typeface.BOLD);
         text(content, "把熟悉的旋律，带进手游。", 14, 0xffa7bebc);
+        action(content, "账号 / 云端同步", () -> startActivityForResult(new Intent(this, AccountActivity.class), 12), false);
         LinearLayout setup = card("01  连接演奏服务");
         serviceStatus = text(setup, "", 14, Color.WHITE);
         text(setup, "首次需在系统设置中开启一次。平时停止、隐藏悬浮窗会保留授权，下次直接使用；只有点击播放后才演奏。", 12, 0xffa7bebc);
@@ -157,7 +158,7 @@ public final class MainActivity extends Activity {
     private void requestService() {
         if (serviceEnabled()) { openAccessibilitySettings(); return; }
         new AlertDialog.Builder(this).setTitle("开启演奏服务")
-            .setMessage("本工具使用无障碍手势，在你标记的音键位置发送触摸。读取窗口所属应用用于切出暂停；不读取文字、不截图。线上曲库会联网下载目录和 MIDI，不上传本地曲谱或设置。\n\n请在系统页面找到「三角洲口风琴 · 演奏服务」并开启。首次必须由你确认；之后使用「停止并隐藏悬浮窗」可保留授权，无需每次重新开启。")
+            .setMessage("本工具使用无障碍手势，在你标记的音键位置发送触摸。读取窗口所属应用用于切出暂停；不读取文字、不截图。公开曲库仅下载；账号注册继承及主动云同步会上传可演奏曲谱副本到私有曲库，不上传窗口信息或校准设置。\n\n请在系统页面找到「三角洲口风琴 · 演奏服务」并开启。首次必须由你确认；之后使用「停止并隐藏悬浮窗」可保留授权，无需每次重新开启。")
             .setPositiveButton("前往系统设置", (d, w) -> openAccessibilitySettings())
             .setNegativeButton("取消", null).show();
     }
@@ -208,6 +209,7 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == 12) {library = new Library(this); refreshLibrary(); return;}
         if (request == 11 && result == RESULT_OK && data != null && data.getStringExtra("songId") != null) {
             settings.selected(data.getStringExtra("songId")); refreshLibrary(); toast("已选用线上曲目，可离线演奏"); return;
         }
@@ -228,7 +230,11 @@ public final class MainActivity extends Activity {
                 }
                 Score score;
                 if (bytes.length >= 4 && bytes[0] == 'M' && bytes[1] == 'T' && bytes[2] == 'h' && bytes[3] == 'd') score = MidiReader.read(bytes, title);
-                else { if (bytes.length > 512000) throw new IllegalArgumentException("文本简谱过大"); score = Score.jianpu(new String(bytes, StandardCharsets.UTF_8).replace("\ufeff", ""), 100, title); }
+                else {
+                    String text = new String(bytes, StandardCharsets.UTF_8).replace("\ufeff", "");
+                    if (text.trim().startsWith("{")) score = CloudScore.decode(new org.json.JSONObject(text));
+                    else {if (bytes.length > 512000) throw new IllegalArgumentException("文本简谱过大"); score = Score.jianpu(text, 100, title);}
+                }
                 String id = library.save(score);
                 runOnUiThread(() -> { settings.selected(id); if (!isDestroyed()) { refreshLibrary(); toast("已加入曲库"); } });
             } catch (Exception e) { runOnUiThread(() -> { if (!isDestroyed()) toast("导入失败：" + e.getMessage()); }); }

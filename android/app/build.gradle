@@ -9,7 +9,7 @@ android {
         targetSdk 34
         versionCode 5
         versionName '0.5.0-preview'
-        testInstrumentationRunner 'top.aiygzn.melodica.GestureSmokeTest'
+        testInstrumentationRunner project.findProperty('testRunner') ?: 'top.aiygzn.melodica.GestureSmokeTest'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
