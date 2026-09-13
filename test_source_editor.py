@@ -1,7 +1,7 @@
 """验证原谱编辑、音符定位和选段上下文；使用自编谱和隔离曲库。"""
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, PropertyMock
 
 from account_client import atomic_json
 from cloud_score import from_song
@@ -66,6 +66,20 @@ class SourceNotationTests(unittest.TestCase):
                 select_jianpu_space(text, '空片段', a, b)
         with self.assertRaisesRegex(ValueError, '完整音符'):
             select_jianpu_space('1_2_', '半个符号', 0, 1)
+
+    def test_selected_trace_rebases_repeated_ties_rests_and_tempo_changes(self):
+        text = '/key(C4)\nbpm60\n7 |: 1~1 - 0 [1 2 :| [2 3\n/key(D4)\nbpm120\n4_5_'
+        trace = []
+        start, end = text.index('1~'), text.index('[1')
+        song = select_jianpu_space(text, '选段', start, end, trace=trace)
+        self.assertEqual([text[left:right] for left, right, _, _ in trace], ['1', '1', '-', '0']*2)
+        self.assertEqual([(a, b) for _, _, a, b in trace], [(i, i+1) for i in range(8)])
+        self.assertEqual(song.duration, 8)
+        self.assertEqual([(n.start, n.end) for n in song.notes], [(0, 3), (4, 7)])
+        tail = []
+        selected = select_jianpu_space(text, '尾段', text.index('4_'), len(text), trace=tail)
+        self.assertEqual([n.pitch for n in selected.notes], [67, 69])
+        self.assertEqual([(a, b) for _, _, a, b in tail], [(0, .25), (.25, .5)])
 
 
 class SourceEditorTests(ScoreEditorTests):
@@ -191,6 +205,110 @@ class SourceEditorTests(ScoreEditorTests):
                     self.assertLessEqual(button.winfo_rooty()+button.winfo_height(),
                                          editor.dialog.winfo_rooty()+editor.dialog.winfo_height())
             editor.close(force=True)
+
+    def test_editor_maximizes_and_restores_with_modal_grab(self):
+        for source in (False, True):
+            editor = self.source_editor()[0] if source else self.editor()
+            self.assertFalse(editor.dialog.transient())
+            normal = (editor.dialog.winfo_width(), editor.dialog.winfo_height())
+            editor.dialog.state('zoomed')
+            self.root.update()
+            self.assertEqual(editor.dialog.state(), 'zoomed')
+            self.assertGreater(editor.dialog.winfo_width(), normal[0])
+            self.assertEqual(editor.dialog.grab_current(), editor.dialog)
+            editor.dialog.state('normal')
+            self.root.update()
+            self.assertEqual((editor.dialog.winfo_width(), editor.dialog.winfo_height()), normal)
+            editor.close(force=True)
+
+    def test_playing_mark_tracks_repeats_holds_rests_and_keeps_selection(self):
+        from test_music import FakeOutput
+        text = '/key(C4)\nbpm60\n|: 1~1 - 0 [1 2 :| [2 3\n/key(D4)\nbpm120\n4_5_'
+        editor, _, _ = self.source_editor(text)
+        editor.select_range(text.index('1~'), text.index('[1'))
+        selection = editor.text.get('sel.first', 'sel.last')
+        insert = editor.text.index('insert')
+        with patch('score_editor.PreviewOutput', return_value=FakeOutput()):
+            editor.preview()
+        expected = ['1', '1', '-', '0', '2', '1', '1', '-', '0', '3', '4_', '5_']
+        self.assertEqual([text[a:b] for a, b, _, _ in editor.preview_trace], expected)
+        for a, b, onset, end in editor.preview_trace:
+            with patch('score_editor.Player.position', new_callable=PropertyMock, return_value=(onset+end)/2):
+                editor.update_playing_position()
+            self.assertEqual(editor.playing_span, (a, b))
+            preview = editor.score_preview
+            self.assertEqual(preview.glyphs[preview.playing_index].start, a)
+            self.assertEqual(preview.canvas.itemcget(preview.hit_items[preview.playing_index], 'fill'), '#c6ef86')
+            self.assertEqual(editor.text.get('playing.first', 'playing.last'), text[a:b])
+        self.assertEqual(editor.text.get('sel.first', 'sel.last'), selection)
+        self.assertEqual(editor.text.index('insert'), insert)
+        first_run = editor.preview_run_id
+        editor.stop_preview()
+        editor.update_playing_position()
+        self.assertIsNone(editor.playing_span)
+        self.assertIsNone(editor.score_preview.playing_index)
+        self.assertFalse(editor.text.tag_ranges('playing'))
+        editor.player.thread.join(1)
+        with patch('score_editor.PreviewOutput', return_value=FakeOutput()):
+            editor.preview(True)
+        editor.events.put((first_run, 'done', ('旧试听完成', None)))
+        with patch('score_editor.Player.position', new_callable=PropertyMock, return_value=4.5):
+            editor.dialog.after_cancel(editor.poll_timer)
+            editor.poll()
+        self.assertEqual(editor.playing_span, (text.index('1~'), text.index('1~')+1))
+        self.assertIn('选中片段', editor.status.get())
+        self.assertEqual(editor.preview_trace[-1][3], 8)
+        self.replace(editor, text.replace('bpm60', 'bpm90'))
+        self.pump(lambda: not editor.player.active and editor.playing_span is None)
+
+    def test_mark_clears_after_completion_and_output_failure(self):
+        from test_music import FakeOutput
+        editor, _, _ = self.source_editor('bpm300\n1 2')
+        with patch('score_editor.PreviewOutput', return_value=FakeOutput()):
+            editor.preview()
+        self.pump(lambda: editor.playing_span is not None)
+        self.pump(lambda: not editor.player.active and editor.playing_span is None
+                  and editor.status.get() == '演奏完成')
+        with patch('score_editor.PreviewOutput', side_effect=RuntimeError('输出设备不可用')):
+            editor.preview()
+        self.pump(lambda: '输出设备不可用' in editor.status.get())
+        self.assertIsNone(editor.score_preview.playing_index)
+        self.assertFalse(editor.text.tag_ranges('playing'))
+
+    def test_preview_scrolls_and_preserves_mark_across_resize_and_pages(self):
+        text = 'bpm300\n' + '1_2_3_4_|\n'*405
+        editor, _, _ = self.source_editor(text)
+        preview = editor.score_preview
+        for index in (180, 2003, 3):
+            glyph = preview.glyphs[index]
+            preview.mark_playing((glyph.start, glyph.end))
+            self.root.update()
+            self.assertEqual(preview.playing_index, index)
+            self.assertEqual(preview.page, index//preview.PAGE_SIZE)
+            self.assertTrue(preview.pages.winfo_ismapped())
+            editor.dialog.state('zoomed' if index == 2003 else 'normal')
+            self.root.update()
+            item = preview.hit_items[index]
+            self.assertEqual(preview.canvas.itemcget(item, 'fill'), '#c6ef86')
+            _, top, _, bottom = preview.canvas.coords(item)
+            visible_top = preview.canvas.canvasy(0)
+            self.assertGreaterEqual(top, visible_top)
+            self.assertLessEqual(bottom, visible_top+preview.canvas.winfo_height())
+        preview.next_page.invoke()
+        self.assertEqual(preview.page, 1)
+        preview.previous_page.invoke()
+        self.assertEqual(preview.page, 0)
+
+    def test_source_mode_marks_the_enclosing_ending_symbol(self):
+        from test_music import FakeOutput
+        text = 'bpm60\n|: 1 [1 2 :| [2 3'
+        editor, _, _ = self.source_editor(text, mode='source')
+        with patch('score_editor.PreviewOutput', return_value=FakeOutput()):
+            editor.preview()
+        with patch('score_editor.Player.position', new_callable=PropertyMock, return_value=1.5):
+            editor.update_playing_position()
+        preview = editor.score_preview
+        self.assertEqual(preview.glyphs[preview.playing_index].text, '[1')
 
 
 def load_tests(loader, tests, pattern):

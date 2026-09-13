@@ -5,6 +5,7 @@ import re
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 import uuid
+from bisect import bisect_right
 
 from account_client import atomic_json
 from cloud_score import from_song, to_song
@@ -25,10 +26,16 @@ class ScoreEditor:
         self.closed = False
         self.validation_timer = None
         self.saved_path = None
+        self.preview_trace, self.preview_starts = [], []
+        self.preview_run_id = None
+        self.playing_span = None
         self.notation, self.source_mode, self.source_url = "simple", "score", ""
         text, bpm = self.source_text()
         self.is_source = self.notation == "jianpu_space"
         self.dialog = app._dialog("编辑乐曲 · 简谱工作台", "1180x800" if self.is_source else "920x710")
+        # Windows 的临时对话框没有最大化按钮；编辑器使用普通窗口边框，仍保留模态抓取。
+        self.dialog.transient("")
+        self.dialog.resizable(True, True)
         self.dialog.minsize(960 if self.is_source else 820, 720 if self.is_source else 650)
         self.dialog.protocol("WM_DELETE_WINDOW", self.close)
         title = app.song.title if app.song.title.endswith(" · 修改版") else app.song.title[:94] + " · 修改版"
@@ -119,7 +126,7 @@ class ScoreEditor:
             split.add(right, minsize=300, stretch="always")
             tk.Label(left, text="谱文 · 保留原谱调号、速度与歌词", bg=CARD, fg=MUTED, anchor="w").pack(fill="x", pady=(0, 7))
             mode = "按谱面规则" if self.source_mode == "score" else "跟随源站播放"
-            tk.Label(right, text=f"谱面预览 · 点击音符定位 · {mode}", bg=CARD, fg=MUTED, anchor="w").pack(fill="x", pady=(0, 7))
+            tk.Label(right, text=f"谱面预览 · 绿色标记跟随试听 · {mode}", bg=CARD, fg=MUTED, anchor="w").pack(fill="x", pady=(0, 7))
             self.score_preview = ScorePreview(right, self.select_range)
             self.score_preview.pack(fill="both", expand=True)
             editor_box = tk.Frame(left, bg=DEEP, highlightbackground=LINE, highlightthickness=1)
@@ -137,6 +144,7 @@ class ScoreEditor:
         scroll.pack(side="right", fill="y")
         self.text.configure(yscrollcommand=scroll.set)
         self.text.pack(fill="both", expand=True)
+        self.text.tag_configure("playing", background="#c6ef86", foreground="#182318")
         self.text.insert("1.0", text)
         self.text.edit_reset()
         self.text.edit_modified(False)
@@ -187,7 +195,7 @@ class ScoreEditor:
     def snapshot(self):
         return self.name.get(), self.bpm.get(), self.style.get(), self.text.get("1.0", "end-1c")
 
-    def parsed(self, selection=False):
+    def parsed(self, selection=False, trace=None):
         if selection:
             if not self.text.tag_ranges("sel"):
                 raise ValueError("请先在简谱中选中一段完整音符。")
@@ -201,8 +209,9 @@ class ScoreEditor:
             if selection:
                 start = len(self.text.get("1.0", "sel.first"))
                 end = len(self.text.get("1.0", "sel.last"))
-                return select_jianpu_space(self.text.get("1.0", "end-1c"), title, start, end, mode=self.source_mode)
-            return parse_jianpu_space(score, title, mode=self.source_mode)[0]
+                return select_jianpu_space(self.text.get("1.0", "end-1c"), title, start, end,
+                                           mode=self.source_mode, trace=trace)
+            return parse_jianpu_space(score, title, mode=self.source_mode, trace=trace)[0]
         try:
             bpm = float(self.bpm.get())
         except ValueError:
@@ -363,12 +372,20 @@ class ScoreEditor:
             self.status.set("请先停止当前试听。")
             return
         try:
-            song = self.parsed(selection)
+            trace = []
+            song = self.parsed(selection, trace=trace)
             # 试听使用保存后相同的毫秒曲谱，避免保存前后节奏不同。
             from cloud_score import to_song
             plan = compile_plan(to_song(from_song(song)), self.app.mapping(), track="auto",
                                 style=self.styles[self.style.get()])
+            # 先完成待处理的谱文校验，避免延迟回调在试听期间重画并清空标记。
+            if self.validation_timer:
+                self.validate()
+            self.preview_trace = [(left, right, round(start*1000)/1000, round(end*1000)/1000)
+                                  for left, right, start, end in trace]
+            self.preview_starts = [item[2] for item in self.preview_trace]
             self.player.start(plan, PreviewOutput, gate=self.app.settings["gate"]/100)
+            self.preview_run_id = self.player.run_id
             self.status.set("正在试听" + ("选中片段" if selection else "全曲") + " · F9 停止")
         except (ValueError, RuntimeError) as error:
             messagebox.showerror("无法试听", str(error), parent=self.dialog)
@@ -376,6 +393,28 @@ class ScoreEditor:
     def stop_preview(self):
         # F9 可从热键线程调用；这里不访问任何 Tk 控件。
         self.player.stop()
+
+    def update_playing_position(self):
+        """只在 Tk 主线程读取播放器时钟；反复、休止和延音按原谱片段定位。"""
+        span = None
+        if (self.is_source and self.player.active and not self.player.cancel.is_set()
+                and self.preview_run_id == self.player.run_id):
+            position = self.player.position
+            index = bisect_right(self.preview_starts, position) - 1
+            if index >= 0 and position < self.preview_trace[index][3]:
+                span = self.preview_trace[index][:2]
+        if span == self.playing_span:
+            return
+        self.playing_span = span
+        self.text.tag_remove("playing", "1.0", "end")
+        if self.is_source:
+            self.score_preview.mark_playing(span)
+        if span:
+            start, end = (self.text_index(offset) for offset in span)
+            self.text.tag_add("playing", start, end)
+            # 播放标记独立于选区，不移动编辑光标或改变选段试听的范围。
+            self.text.tag_raise("sel")
+            self.text.see(start)
 
     def poll(self):
         try:
@@ -386,6 +425,7 @@ class ScoreEditor:
                     self.status.set(f"试听失败：{error}" if error else status)
         except queue.Empty:
             pass
+        self.update_playing_position()
         active = self.player.active
         for button in (self.preview_button, self.selection_button):
             button.configure(state="disabled" if active else "normal")

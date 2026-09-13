@@ -1,5 +1,6 @@
 """简谱空间风格的原谱编辑辅助与可定位的谱面预览；不依赖网站脚本。"""
 from dataclasses import dataclass
+from bisect import bisect_right
 import re
 import tkinter as tk
 from tkinter import font as tkfont
@@ -99,10 +100,16 @@ def transpose_source(text, semitones, mode):
 
 class ScorePreview(tk.Frame):
     """把原简谱渲染成数字、八度点、减时线和歌词，点击符号定位编辑文字。"""
+    PAGE_SIZE = 2000
+
     def __init__(self, parent, select):
         super().__init__(parent, bg='#faf7ed')
         self.select = select
         self.glyphs = []
+        self.glyph_starts = []
+        self.playing_index = None
+        self.page = 0
+        self.hit_items = {}
         self.font = tkfont.Font(self, family='Consolas', size=18, weight='bold')
         self.small = tkfont.Font(self, family='Microsoft YaHei UI', size=9)
         self.canvas = tk.Canvas(self, bg='#faf7ed', highlightthickness=0)
@@ -114,11 +121,53 @@ class ScorePreview(tk.Frame):
         self.canvas.bind('<MouseWheel>', lambda e: self.canvas.yview_scroll(-int(e.delta / 120), 'units'))
         self.canvas.bind('<Button-1>', self.clicked)
         self.canvas.bind('<Motion>', self.hover)
+        self.pages = tk.Frame(self, bg='#faf7ed')
+        self.previous_page = tk.Button(self.pages, text='上一页', command=lambda: self.change_page(self.page-1))
+        self.previous_page.pack(side='left')
+        self.page_label = tk.Label(self.pages, bg='#faf7ed', fg='#486346')
+        self.page_label.pack(side='left', expand=True)
+        self.next_page = tk.Button(self.pages, text='下一页', command=lambda: self.change_page(self.page+1))
+        self.next_page.pack(side='right')
 
     def show(self, text, error=None):
         self.glyphs = score_glyphs(text) if not error else []
+        self.glyph_starts = [glyph.start for glyph in self.glyphs]
+        self.playing_index = None
+        self.page = min(self.page, max(0, (len(self.glyphs)-1)//self.PAGE_SIZE))
         self.error = error
         self.draw()
+
+    def change_page(self, page):
+        self.page = min(max(0, page), max(0, (len(self.glyphs)-1)//self.PAGE_SIZE))
+        self.canvas.yview_moveto(0)
+        self.draw()
+
+    def mark_playing(self, span):
+        """按源文位置找符号；反复回跳可复用同一符号，源站房子数字落在整个房子标记内。"""
+        previous = self.hit_items.get(self.playing_index)
+        if previous:
+            self.canvas.itemconfigure(previous, fill='#faf7ed', outline='')
+        index = bisect_right(self.glyph_starts, span[0])-1 if span else -1
+        if index >= 0 and self.glyphs[index].end >= span[1]:
+            self.playing_index = index
+            if index // self.PAGE_SIZE != self.page:
+                self.change_page(index // self.PAGE_SIZE)
+        else:
+            self.playing_index = None
+        self.paint_playing()
+
+    def paint_playing(self):
+        item = self.hit_items.get(self.playing_index)
+        if not item:
+            return
+        self.canvas.itemconfigure(item, fill='#c6ef86', outline='#4c782f', width=2)
+        _, top, _, bottom = self.canvas.coords(item)
+        visible_top = self.canvas.canvasy(0)
+        visible_bottom = visible_top + self.canvas.winfo_height()
+        if top < visible_top or bottom > visible_bottom:
+            region = self.canvas.bbox('all')
+            total = float(self.canvas.cget('scrollregion').split()[3]) if region else 1
+            self.canvas.yview_moveto(max(0, top-18) / max(1, total))
 
     def metrics(self, glyph, width):
         duration, lyric = '', glyph.lyric
@@ -136,7 +185,16 @@ class ScorePreview(tk.Frame):
     def draw(self, event=None):
         canvas = self.canvas
         canvas.delete('all')
+        self.hit_items = {}
         width = max(200, canvas.winfo_width())
+        count = max(1, (len(self.glyphs)+self.PAGE_SIZE-1)//self.PAGE_SIZE)
+        if count > 1:
+            self.pages.pack(side='bottom', fill='x', before=self.canvas)
+            self.page_label.configure(text=f'{self.page+1} / {count} 页 · 试听自动翻页')
+            self.previous_page.configure(state='normal' if self.page > 0 else 'disabled')
+            self.next_page.configure(state='normal' if self.page+1 < count else 'disabled')
+        else:
+            self.pages.pack_forget()
         if getattr(self, 'error', None):
             canvas.create_text(18, 20, text='请先修正谱文\n' + self.error, anchor='nw', width=width-36,
                                fill='#9a431e', font=self.small)
@@ -147,7 +205,8 @@ class ScorePreview(tk.Frame):
         slurs, ties = [], []
         last_note = None
         previous_kind = None
-        displayed = self.glyphs[:2000]
+        page_start = self.page * self.PAGE_SIZE
+        displayed = self.glyphs[page_start:page_start+self.PAGE_SIZE]
         sizes = [self.metrics(glyph, width) for glyph in displayed]
         for index, glyph in enumerate(displayed):
             advance, duration_text, lyric_text = sizes[index]
@@ -171,9 +230,10 @@ class ScorePreview(tk.Frame):
                     or x + advance > width - 20) and x > 24:
                 x, y = 24, y + step
             previous_line, previous_kind = glyph.line, glyph.kind
-            tag = f'g{index}'
-            canvas.create_rectangle(x-4, y-height*1.2, x+advance-4, y+height*1.5,
-                                    fill='#faf7ed', outline='', tags=(tag, 'hit'))
+            tag = f'g{page_start+index}'
+            self.hit_items[page_start+index] = canvas.create_rectangle(
+                x-4, y-height*1.2, x+advance-4, y+height*1.5,
+                fill='#faf7ed', outline='', tags=(tag, 'hit'))
             if glyph.kind == 'note':
                 center = x + 14
                 slurs = [(center, y) if point is None else point for point in slurs]
@@ -223,11 +283,8 @@ class ScorePreview(tk.Frame):
                 canvas.create_text(x, y, text=label, anchor='w', font=self.small,
                                    fill='#486346' if glyph.kind != 'annotation' else '#9a6c38', tags=tag)
             x += advance
-        if len(self.glyphs) > 2000:
-            y += step
-            canvas.create_text(24, y, text='谱面较长，仅预览前 2000 个符号；仍可编辑、保存和试听全曲。',
-                               anchor='w', font=self.small, fill='#9a431e')
         canvas.configure(scrollregion=(0, 0, width, y+step))
+        self.paint_playing()
 
     def arc(self, start, end, width, step, height):
         x, y = start

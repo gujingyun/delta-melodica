@@ -487,15 +487,18 @@ def parse_jianpu_space(text: str, title: str, *, mode="score", trace=None) -> tu
     return Song(title.strip() or "在线简谱", notes, duration=cursor), warnings
 
 
-def select_jianpu_space(text, title, start, end, *, mode="score"):
+def select_jianpu_space(text, title, start, end, *, mode="score", trace=None):
     """从完整解析的时间轴裁出选中文字，保留上下文调号、歌词转调及反复次数。"""
-    trace = []
-    song, _ = parse_jianpu_space(text, title, mode=mode, trace=trace)
+    full_trace = []
+    song, _ = parse_jianpu_space(text, title, mode=mode, trace=full_trace)
     intervals = []
-    for left, right, onset, release in trace:
+    selected_trace, selected_time = [], 0.0
+    for left, right, onset, release in full_trace:
         if left < end and right > start:
             if left < start or right > end:
                 raise ValueError("请选中完整音符，包括升降号、八度点和时值符号。")
+            selected_trace.append((left, right, selected_time, selected_time + release - onset))
+            selected_time += release - onset
             if intervals and abs(intervals[-1][1] - onset) < 1e-8:
                 intervals[-1] = (intervals[-1][0], release)
             else:
@@ -513,6 +516,8 @@ def select_jianpu_space(text, title, start, end, *, mode="score"):
         cursor += release - onset
     if not notes:
         raise ValueError("选中的内容没有可试听的音符。")
+    if trace is not None:
+        trace.extend(selected_trace)
     return Song(title, notes, song.tracks, cursor)
 
 
