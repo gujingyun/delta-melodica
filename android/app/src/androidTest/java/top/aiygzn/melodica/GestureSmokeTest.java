@@ -322,7 +322,21 @@ public final class GestureSmokeTest extends Instrumentation {
     private void await(BooleanSupplier condition, long timeout, String failure) {
         long end = SystemClock.uptimeMillis() + timeout;
         while (SystemClock.uptimeMillis() < end) { final boolean[] value = {false}; runOnMainSync(() -> value[0] = condition.getAsBoolean()); if (value[0]) return; SystemClock.sleep(30); }
-        throw new AssertionError(failure);
+        final String[] detail = {""};
+        if (service != null) runOnMainSync(() -> {
+            detail[0] = "；服务状态=" + field(service, "message") + "；播放状态=" + transport().state;
+            if (keyboard != null) {
+                Point current = new Point(); keyboard.getWindowManager().getDefaultDisplay().getRealSize(current);
+                detail[0] += "；键盘活跃=" + TouchTestActivity.active + "；焦点=" + keyboard.hasWindowFocus()
+                    + "；屏幕=" + current + "/" + keyboard.getWindowManager().getDefaultDisplay().getRotation()
+                    + "；校准=" + settings.width() + "x" + settings.height() + "/" + settings.rotation();
+                try {
+                    java.lang.reflect.Method method = MelodicaService.class.getDeclaredMethod("foreground"); method.setAccessible(true);
+                    detail[0] += "；前台=" + method.invoke(service);
+                } catch (Exception error) {detail[0] += "；前台读取失败=" + error;}
+            }
+        });
+        throw new AssertionError(failure + detail[0]);
     }
     private void check(boolean value, String failure) { if (!value) throw new AssertionError(failure); }
     private void pass(String value) { report.append("通过：").append(value).append('\n'); }
