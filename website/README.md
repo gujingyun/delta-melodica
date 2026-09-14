@@ -6,7 +6,7 @@ Windows 下载沿用 `api/download`，安卓下载页及发布模板改用 `api/
 
 后台显示浏览次数、下载总次数、Windows 和 Android 下载次数。接口新增 `downloads_windows`、`downloads_android`，保留 `downloads` 作为两端总计。原来只有 `downloads` 的数据自动归入 Windows，首次写入在原有文件锁内保存新字段，历史次数和创建时间保留。Android 从 2026-09-14 接入后累计，此前未统计的下载不回填。计数口径为 GET 下载入口请求次数，重复请求重复累计；HEAD、静态安装包和校验文件不计数，不表示下载完成或独立用户数。
 
-升级版本时同步维护服务中的 Windows／Android 安装包目标，安卓独立版本清单仍指向静态 APK。统计回归在 Linux 运行 `python3 -m unittest -v server.test_melodica_stats`，使用临时目录和回环端口；后台浏览器回归运行 `npm --prefix website run test:stats`，支持 `PLAYWRIGHT_MODULE`，使用本机模拟数据验证两端显示、刷新、错误重试、四档宽度和重定向下载。截图为测试样例数据。部署及最终校验见[分平台统计记录](../docs/platform-download-stats.md)。
+升级版本时同步维护服务中的 Windows／Android 安装包目标，安卓独立版本清单仍指向静态 APK。统计回归在 Linux 运行 `python3 -m unittest -v server.test_melodica_stats`，使用临时目录和回环端口；后台浏览器回归运行 `npm --prefix website run test:stats`，支持 `PLAYWRIGHT_MODULE`，使用本机模拟数据验证两端显示、刷新、错误重试、四档宽度和重定向下载。截图为测试样例数据。已于 2026-09-14 上线，并通过真实公网 APK 下载和计数校验；详见[分平台统计记录](../docs/platform-download-stats.md)。
 
 ## Windows v0.15 发布
 
