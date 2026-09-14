@@ -40,14 +40,18 @@
     </header>
     <section class="stats-grid" aria-label="网站统计数据">
       <article class="stat-card"><span>浏览次数</span><strong id="views">—</strong></article>
-      <article class="stat-card"><span>下载次数</span><strong id="downloads">—</strong></article>
+      <article class="stat-card"><span>下载总次数</span><strong id="downloads">—</strong></article>
+      <article class="stat-card"><span>Windows 下载次数</span><strong id="downloads-windows">—</strong></article>
+      <article class="stat-card"><span>Android 下载次数</span><strong id="downloads-android">—</strong></article>
     </section>
     <p class="stats-status" id="status">正在读取数据…</p>
-    <p class="stats-note">统计仅记录官网页面打开次数和页面下载入口点击次数，不记录访客姓名、账号或曲谱内容。浏览次数按页面加载请求计数，直接访问静态文件不会计入下载次数。</p>
+    <p class="stats-note">统计仅记录官网页面打开次数和下载入口请求次数，不记录访客姓名、账号或曲谱内容。Windows 保留原有下载数据，Android 从 2026 年 9 月 14 日接入后开始累计，此前下载未统计。下载次数不代表下载完成数或独立用户数；重复请求会重复计数，直接访问安装包和 HEAD 探测不计数。</p>
   </main>
   <script>
     const views = document.getElementById('views');
     const downloads = document.getElementById('downloads');
+    const windowsDownloads = document.getElementById('downloads-windows');
+    const androidDownloads = document.getElementById('downloads-android');
     const status = document.getElementById('status');
     const refresh = document.getElementById('refresh');
 
@@ -60,6 +64,8 @@
         const data = await response.json();
         views.textContent = Number(data.views || 0).toLocaleString('zh-CN');
         downloads.textContent = Number(data.downloads || 0).toLocaleString('zh-CN');
+        windowsDownloads.textContent = Number(data.downloads_windows ?? data.downloads ?? 0).toLocaleString('zh-CN');
+        androidDownloads.textContent = Number(data.downloads_android || 0).toLocaleString('zh-CN');
         const updated = data.updated_at ? new Date(data.updated_at).toLocaleString('zh-CN') : '尚无记录';
         status.textContent = '最后更新：' + updated;
       } catch (_) {

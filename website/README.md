@@ -1,5 +1,13 @@
 # 三角洲口风琴介绍页
 
+## Windows 与 Android 下载统计
+
+Windows 下载沿用 `api/download`，安卓下载页及发布模板改用 `api/download/android`，由统计服务计数后 302 跳转至对应安装包。部署时先更新 `server/melodica_stats.py` 并重启统计服务，确认两端 HEAD 跳转正确后再发布 `android.html` 与 `admin/index.html`；现有 Nginx `/melodica/api/` 代理已覆盖新入口，无需改配置。
+
+后台显示浏览次数、下载总次数、Windows 和 Android 下载次数。接口新增 `downloads_windows`、`downloads_android`，保留 `downloads` 作为两端总计。原来只有 `downloads` 的数据自动归入 Windows，首次写入在原有文件锁内保存新字段，历史次数和创建时间保留。Android 从 2026-09-14 接入后累计，此前未统计的下载不回填。计数口径为 GET 下载入口请求次数，重复请求重复累计；HEAD、静态安装包和校验文件不计数，不表示下载完成或独立用户数。
+
+升级版本时同步维护服务中的 Windows／Android 安装包目标，安卓独立版本清单仍指向静态 APK。统计回归在 Linux 运行 `python3 -m unittest -v server.test_melodica_stats`，使用临时目录和回环端口；后台浏览器回归运行 `npm --prefix website run test:stats`，支持 `PLAYWRIGHT_MODULE`，使用本机模拟数据验证两端显示、刷新、错误重试、四档宽度和重定向下载。截图为测试样例数据。部署及最终校验见[分平台统计记录](../docs/platform-download-stats.md)。
+
 ## Windows v0.15.1 发布
 
 修复退出草稿保护、BOM 与旧版曲谱导入、损坏曲目删除及游客记录恢复提示。发布文件为 `updates-v0.15.1.html`、`assets/main-window-v0.15.1.png` 和 `downloads/delta-melodica-v0.15.1.exe`，同时切换首页、下载跳转和 `version.json`。沿用下方的备份、校验与发布顺序。

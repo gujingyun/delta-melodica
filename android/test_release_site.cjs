@@ -29,10 +29,12 @@ const output = path.join(__dirname, '..', 'work', 'android-release-v060');
           if (href.startsWith('#')) { assert.equal(await page.locator(href).count(), 1); continue; }
           const url = new URL(href, page.url());
           if (url.origin !== new URL(base).origin) continue;
+          // 静态预览没有统计 API；接口由 Linux 回归和上线检查独立验证。
+          if (href === 'api/download/android') continue;
           assert.equal((await page.request.get(url.href)).status(), 200, `缺失资源：${href}`);
         }
         if (filename === 'android.html') {
-          assert.equal(await page.locator('a[download]').getAttribute('href'), manifest.file);
+          assert.equal(await page.locator('a[download]').getAttribute('href'), 'api/download/android');
           if ([390,1440].includes(width)) await page.screenshot({path:path.join(output, `website-${width}.png`), fullPage:true});
         }
       }

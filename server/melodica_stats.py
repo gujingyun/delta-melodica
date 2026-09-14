@@ -17,6 +17,7 @@ PORT = 3002
 DATA_DIR = Path(os.environ.get("MELODICA_STATS_DIR", "/var/lib/delta-melodica-stats"))
 DATA_FILE = DATA_DIR / "stats.json"
 DOWNLOAD_LOCATION = "/melodica/downloads/delta-melodica-v0.15.1.exe"
+ANDROID_DOWNLOAD_LOCATION = "/melodica/downloads/delta-melodica-android-v0.6.0.apk"
 
 
 def now_text() -> str:
@@ -26,7 +27,18 @@ def now_text() -> str:
 
 def default_stats() -> Dict[str, Any]:
     """返回初始统计数据。"""
-    return {"views": 0, "downloads": 0, "created_at": now_text(), "updated_at": None}
+    return {
+        "views": 0, "downloads": 0, "downloads_windows": 0, "downloads_android": 0,
+        "created_at": now_text(), "updated_at": None,
+    }
+
+
+def normalize_stats(stats: Dict[str, Any]) -> Dict[str, Any]:
+    """旧版仅统计 Windows；保留历史次数，并由两端计数生成总数。"""
+    stats.setdefault("downloads_windows", int(stats.get("downloads", 0)))
+    stats.setdefault("downloads_android", 0)
+    stats["downloads"] = stats["downloads_windows"] + stats["downloads_android"]
+    return stats
 
 
 def change_counter(field: str) -> Dict[str, Any]:
@@ -39,7 +51,9 @@ def change_counter(field: str) -> Dict[str, Any]:
             stats = json.load(handle)
         except (json.JSONDecodeError, ValueError):
             stats = default_stats()
+        normalize_stats(stats)
         stats[field] = int(stats.get(field, 0)) + 1
+        normalize_stats(stats)
         stats["updated_at"] = now_text()
         handle.seek(0)
         handle.truncate()
@@ -56,7 +70,7 @@ def read_stats() -> Dict[str, Any]:
     with DATA_FILE.open("r", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_SH)
         try:
-            return json.load(handle)
+            return normalize_stats(json.load(handle))
         except (json.JSONDecodeError, ValueError):
             return default_stats()
         finally:
@@ -81,15 +95,33 @@ class StatsHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_GET(self) -> None:  # noqa: N802
+    def send_download(self, count: bool) -> bool:
+        """按平台跳转；HEAD 探测不计数，GET 与总数在同一文件锁内更新。"""
         path = urlsplit(self.path).path
-        if path == "/download":
-            change_counter("downloads")
-            self.send_response(302)
-            self.send_header("Location", DOWNLOAD_LOCATION)
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
+        routes = {
+            "/download": ("downloads_windows", DOWNLOAD_LOCATION),
+            "/download/android": ("downloads_android", ANDROID_DOWNLOAD_LOCATION),
+        }
+        if path not in routes:
+            return False
+        field, location = routes[path]
+        if count:
+            change_counter(field)
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        return True
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        if not self.send_download(count=False):
+            self.send_error(404)
+
+    def do_GET(self) -> None:  # noqa: N802
+        if self.send_download(count=True):
             return
+        path = urlsplit(self.path).path
         if path == "/stats":
             self.send_json(read_stats())
             return

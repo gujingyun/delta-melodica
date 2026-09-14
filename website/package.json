@@ -1,6 +1,6 @@
 {
   "name": "delta-melodica-website-checks",
   "private": true,
-  "scripts": {"test:accounts": "node ../test_account_web.cjs", "test:homepage": "node ../test_homepage.cjs"},
+  "scripts": {"test:accounts": "node ../test_account_web.cjs", "test:homepage": "node ../test_homepage.cjs", "test:stats": "node test_stats.cjs"},
   "devDependencies": {"playwright": "1.62.1"}
 }
