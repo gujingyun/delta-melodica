@@ -1,5 +1,9 @@
 # 三角洲口风琴介绍页
 
+## Windows v0.15.1 发布
+
+修复退出草稿保护、BOM 与旧版曲谱导入、损坏曲目删除及游客记录恢复提示。发布文件为 `updates-v0.15.1.html`、`assets/main-window-v0.15.1.png` 和 `downloads/delta-melodica-v0.15.1.exe`，同时切换首页、下载跳转和 `version.json`。沿用下方的备份、校验与发布顺序。
+
 ## Windows v0.15 发布
 
 客户端支持原谱精确拍数、谱面预览与特殊时值编辑。对应 `updates-v0.15.html`、`assets/main-window-v0.15.png` 和 `downloads/delta-melodica-v0.15.exe`。先上传校验成品与资源，再切换下载跳转、首页和 `version.json`；保留安卓页面、账号资源和线上曲库。

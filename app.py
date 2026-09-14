@@ -43,7 +43,7 @@ LINE = "#303b33"
 ORANGE = "#e9bb7b"
 PLAY_STYLES = {"钢琴适配 · 连奏": "piano", "原谱 · 分音": "original"}
 SPEEDS = ["0.25", "0.50", "0.75", "1.00", "1.25", "1.50", "1.75", "2.00"]
-APP_VERSION = "0.15"
+APP_VERSION = "0.15.1"
 UPDATE_MANIFEST_URL = "https://aiygzn.top/melodica/version.json"
 UPDATE_PAGE_URL = "https://aiygzn.top/melodica/"
 
