@@ -14,6 +14,10 @@ public final class Score {
     public static final String[] LABELS = {"1", "2", "3", "4", "5", "6", "7", "高1", "降调", "升调", "半音", "自然音"};
     public static final int[] CALIBRATION_ORDER = {0, 1, 2, 3, 4, 5, 6, 7, HALF, HIGH, NATURAL, LOW};
     public static final String STAR = "1 1 5 5 6 6 5:2 | 4 4 3 3 2 2 1:2 | 5 5 4 4 3 3 2:2 | 5 5 4 4 3 3 2:2 | 1 1 5 5 6 6 5:2 | 4 4 3 3 2 2 1:2";
+    public static final String UNLOCK_NIGHTINGALE = "7 6 7 6 | 3 5 4";
+    public static final String UNLOCK_WATCH = "5 1 2 3 | 5 4 3 1 | 2 3";
+    public static final String UNLOCK_WIND = "6 7 1 2 | 1 7 1";
+    public static final String UNLOCK_DAWN = "7 6 3 6 | 7 6 7 +1 | +4 +3 +4";
     public static final class Note {
         public final long start, end;
         public final int pitch, track;

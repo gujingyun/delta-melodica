@@ -94,7 +94,7 @@ public class OnlineLibraryTest {
         Score score = Score.jianpu("1 2 3", 120, "下载测试");
         String imported = library.save(score), online = library.saveOnline("online-test", score);
         assertEquals(online, library.saveOnline("online-test", score)); assertNotEquals(imported, online);
-        assertEquals(3, library.entries().size()); assertTrue(library.hasOnline("online-test"));
+        assertEquals(Library.BUILTIN_COUNT + 2, library.entries().size()); assertTrue(library.hasOnline("online-test"));
         assertEquals(3, new Library(folder).read(online).notes.size());
         byte[] before = Files.readAllBytes(new java.io.File(folder, online).toPath());
         try {

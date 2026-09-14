@@ -37,7 +37,7 @@ public class CloudScoreTest {
             Library library = new Library(dir); Score score = Score.jianpu("1 2 3", 100, "云端测试");
             String id = library.saveCloud(CloudScore.id(score), score);
             assertEquals(id, library.saveCloud(CloudScore.id(score), score));
-            assertEquals(2, library.entries().size()); assertEquals(3, library.read(id).notes.size());
+            assertEquals(Library.BUILTIN_COUNT + 1, library.entries().size()); assertEquals(3, library.read(id).notes.size());
         } finally {for (java.io.File file : dir.listFiles()) java.nio.file.Files.delete(file.toPath()); java.nio.file.Files.delete(dir.toPath());}
     }
 }

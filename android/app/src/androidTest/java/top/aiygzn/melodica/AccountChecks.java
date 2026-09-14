@@ -49,12 +49,12 @@ public final class AccountChecks extends Instrumentation {
                 check(new File(folder, "songs/" + name).isFile(), "游客原文件丢失");
                 first.sync(); first.sync(); check(server.songs.get("first").size() == 1, "同步重试产生重复曲目");
                 report.append("通过：游客登录提示、Keystore 加密与恢复、继承断网重试、原文件保留、重复同步去重\n");
-                first.logout(); check(new Library(isolated).entries().size() == 1, "游客可见已归属曲目");
+                first.logout(); check(new Library(isolated).entries().size() == Library.BUILTIN_COUNT, "游客可见已归属曲目");
                 first.authenticate("register", "second@example.com", "test-password-123", "123456");
-                check(first.claimGuest() == 0, "第二账号继承了第一账号曲目"); check(new Library(isolated).entries().size() == 1, "账号曲库串号");
+                check(first.claimGuest() == 0, "第二账号继承了第一账号曲目"); check(new Library(isolated).entries().size() == Library.BUILTIN_COUNT, "账号曲库串号");
                 first.logout(); first.authenticate("login", "first@example.com", "test-password-123", "");
                 File local = new File(first.profile(), "songs/" + name); check(local.delete(), "测试副本未移除");
-                first.sync(); check(new Library(isolated).entries().size() == 2, "云端曲谱未下载到账号曲库");
+                first.sync(); check(new Library(isolated).entries().size() == Library.BUILTIN_COUNT + 1, "云端曲谱未下载到账号曲库");
                 first.logout(); report.append("通过：退出登录、账号隔离、云端下载与本地可读曲谱\n");
             } finally {
                 isolated.getSharedPreferences("account", 0).edit().clear().commit();

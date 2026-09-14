@@ -16,15 +16,28 @@ import java.util.UUID;
 public final class Library {
     private final File folder;
     private Account account;
+    public static final int BUILTIN_COUNT = 5;
+    private static final Builtin[] BUILT_INS = {
+        new Builtin("demo", "小星星", Score.STAR),
+        new Builtin("unlock-nightingale", "乐曲解锁-夜莺", Score.UNLOCK_NIGHTINGALE),
+        new Builtin("unlock-watch", "乐曲解锁-守望", Score.UNLOCK_WATCH),
+        new Builtin("unlock-wind", "乐曲解锁-风起", Score.UNLOCK_WIND),
+        new Builtin("unlock-dawn", "乐曲解锁-破晓", Score.UNLOCK_DAWN)
+    };
     public Library(Context context) { this(new File(new Account(context).profile(), "songs")); account = new Account(context); }
     Library(File folder) { this.folder = folder; folder.mkdirs(); }
+    private static final class Builtin {
+        final String id, title, score;
+        Builtin(String id, String title, String score) { this.id = id; this.title = title; this.score = score; }
+    }
     public static final class Entry {
         public final String id, title;
         Entry(String id, String title) { this.id = id; this.title = title; }
         @Override public String toString() { return title; }
     }
     public List<Entry> entries() {
-        List<Entry> entries = new ArrayList<>(); entries.add(new Entry("demo", "小星星 · 内置"));
+        List<Entry> entries = new ArrayList<>();
+        for (Builtin builtin : BUILT_INS) entries.add(new Entry(builtin.id, builtin.title + " · 内置"));
         File[] files = folder.listFiles((dir, name) -> name.endsWith(".json"));
         if (files != null) for (File file : files) {
             if (account != null && !account.signedIn() && !account.guestVisible(file.getName())) continue;
@@ -39,7 +52,7 @@ public final class Library {
         return new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
     }
     public Score read(String id) throws Exception {
-        if (id.equals("demo")) return Score.jianpu(Score.STAR, 100, "小星星");
+        for (Builtin builtin : BUILT_INS) if (builtin.id.equals(id)) return Score.jianpu(builtin.score, 100, builtin.title);
         if (!id.matches("[a-f0-9-]+\\.json")) throw new IllegalArgumentException("曲谱标识无效");
         JSONObject json = object(new File(folder, id)); JSONArray data = json.getJSONArray("notes");
         List<Score.Note> notes = new ArrayList<>();
@@ -49,6 +62,10 @@ public final class Library {
             notes.add(new Score.Note(n.getLong(0), n.getLong(1), n.getInt(2), n.getInt(3)));
         }
         return new Score(json.getString("title"), notes, json.getLong("duration"));
+    }
+    public static boolean isBuiltin(String id) {
+        for (Builtin builtin : BUILT_INS) if (builtin.id.equals(id)) return true;
+        return false;
     }
     public String save(Score score) throws Exception {
         return save(score, UUID.randomUUID() + ".json");

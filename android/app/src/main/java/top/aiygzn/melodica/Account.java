@@ -165,7 +165,7 @@ public final class Account {
         for (int i = 0; i < remote.length(); i++) remoteIds.add(remote.getJSONObject(i).getString("id"));
         Library library = new Library(context); int uploaded = 0, downloaded = 0;
         for (Library.Entry entry : library.entries()) {
-            if (entry.id.equals("demo")) continue;
+            if (Library.isBuiltin(entry.id)) continue;
             Score score = library.read(entry.id); String id = CloudScore.id(score); localIds.add(id);
             if (!remoteIds.contains(id)) {request("POST", "/library/songs", CloudScore.encode(score)); remoteIds.add(id); uploaded++;}
         }
