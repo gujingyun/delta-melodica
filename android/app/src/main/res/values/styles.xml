@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="service_description">按你选择的曲谱，在你校准并绑定的游戏窗口发送触摸手势。读取窗口所属应用用于切出暂停，不读取文字、不截图、不收集屏幕内容。公开曲库仅下载 MIDI / JSON 曲谱；注册继承和主动云同步会上传曲谱，不上传校准与窗口信息。仅在你点击播放后演奏；停止并隐藏悬浮窗会保留授权。如需关闭授权，请在此系统页面关闭服务。</string>
+    <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#66E3AC</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#0D1719</item>
+        <item name="android:navigationBarColor">#0D1719</item>
+        <item name="android:windowBackground">#0D1719</item>
+    </style>
+</resources>

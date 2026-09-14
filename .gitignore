@@ -8,6 +8,11 @@ dist/
 .venv/
 work/
 releases/
+android/.gradle/
+android/.idea/
+android/local.properties
+*.jks
+*.keystore
 *.sqlite3
 *.sqlite3-journal
 *.sqlite3-wal

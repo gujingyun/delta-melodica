@@ -120,6 +120,10 @@ Windows 客户端改用炭黑与浅绿配色，统一品牌标识、按钮层级
 
 Windows 本地 MIDI／简谱自动演奏工具，按三角洲行动口风琴的八个音键设计。
 
+安卓 v0.6.0 已于 2026-09-14 正式上线，[官网首页](https://aiygzn.top/melodica/)首屏与底部均有「下载 Android 版」入口，也可进入[安卓下载页](https://aiygzn.top/melodica/android.html)。用户确认真机试奏正常后发布，公开 APK 下载和签名校验通过；支持 MIDI／JSON 公开曲库、账号云同步、12 点校准和悬浮演奏。旧调试预览包切换到正式签名前必须先保留曲谱。工程与构建说明见 [`android/`](android/README.md)，[发布结果](docs/android-v0.6.0-release.md)。
+
+手机版安装与使用可观看[官网视频教程](https://aiygzn.top/melodica/android.html#tutorial)，支持暂停、拖动进度及全屏观看。
+
 ## 开始使用
 
 1. 先从系统托盘退出正在运行的旧版本，再双击 `dist\三角洲口风琴_v0.14.exe`，无需安装 Python。启动时会自动请求管理员权限，请在 Windows 弹窗中点「是」。如果当前已经是管理员环境，Windows 可能不重复弹窗；取消确认则不启动。
