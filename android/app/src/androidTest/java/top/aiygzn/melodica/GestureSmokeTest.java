@@ -28,9 +28,9 @@ public final class GestureSmokeTest extends Instrumentation {
     private Point size;
     private int rotation;
     private PointF[] points;
-    private boolean onlineOnly, timingOnly, permissionsOnly;
+    private boolean onlineOnly, timingOnly, permissionsOnly, overlayOnly;
     private final StringBuilder report = new StringBuilder();
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); onlineOnly = "online".equals(arguments.getString("suite")); timingOnly = "timing".equals(arguments.getString("suite")); permissionsOnly = "permissions".equals(arguments.getString("suite")); start(); }
+    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); onlineOnly = "online".equals(arguments.getString("suite")); timingOnly = "timing".equals(arguments.getString("suite")); permissionsOnly = "permissions".equals(arguments.getString("suite")); overlayOnly = "overlay".equals(arguments.getString("suite")); start(); }
     @Override public void onStart() {
         SharedPreferences prefs = getTargetContext().getSharedPreferences("melodica", 0);
         Map<String, ?> previous = new HashMap<>(prefs.getAll());
@@ -75,6 +75,7 @@ public final class GestureSmokeTest extends Instrumentation {
                 calibrate(keyboard.getPackageName(), rotation);
             });
             if (timingOnly) { measureTiming(); }
+            else if (overlayOnly) { overlayChecks(); }
             else {
             runOnMainSync(() -> {
                 prefs.edit().remove("calibrationVersion").commit();
@@ -103,7 +104,7 @@ public final class GestureSmokeTest extends Instrumentation {
             runOnMainSync(() -> {
                 check(transport().state == Transport.State.COUNTDOWN && count("downs") == 0, "倒计时提前按下音键");
                 View collapse = find((View) field(service, "panel"), "收起");
-                check(!collapse.isEnabled(), "倒计时中收起未禁用"); collapse.performClick();
+                check(!collapse.isEnabled() && collapse.getVisibility() == View.GONE, "倒计时中收起未隐藏并禁用"); collapse.performClick();
                 check(field(service, "panel") != null && transport().active(), "收起入口绕过了播放保护");
             });
             await(() -> count("ups") == 3, 7000, "完整演奏没有收到三个抬起事件");
@@ -151,18 +152,17 @@ public final class GestureSmokeTest extends Instrumentation {
             await(() -> !transport().active() && held() == 0, 6500, "短音变音未完成");
             check(list("pitches").subList(noteStart, list("pitches").size()).equals(Arrays.asList(60, 75, 49, 61, 62)), "切换耗时吞掉短音"); pass("密集跨音区半音不丢短音");
             start("1:16"); await(() -> held() == 1, 4500, "收起禁用测试前未按下音键");
-            final PointF[] collapsePoint = new PointF[1];
             runOnMainSync(() -> {
-                View collapse = find((View) field(service, "panel"), "收起"); check(!collapse.isEnabled(), "演奏中收起未禁用");
-                int[] p = new int[2]; collapse.getLocationOnScreen(p); collapsePoint[0] = new PointF(p[0] + collapse.getWidth() / 2f, p[1] + collapse.getHeight() / 2f);
+                View collapse = find((View) field(service, "panel"), "收起"); check(!collapse.isEnabled() && collapse.getVisibility() == View.GONE, "演奏中收起未隐藏并禁用");
+                collapse.performClick(); check(transport().active(), "隐藏按钮绕过播放保护");
             });
-            saveScreen("collapse-disabled-v03.png");
-            tap(collapsePoint[0]);
-            check(field(service, "panel") != null, "手指点击禁用按钮后悬浮窗消失");
-            runOnMainSync(service::stop);
+            saveScreen("overlay-playing.png");
+            tap(panelCenter("停止"));
+            await(() -> transport().state == Transport.State.READY && held() == 0, 1000, "真实点击紧凑条停止失败");
+            check(field(service, "panel") != null && transport().position(SystemClock.uptimeMillis()) == 0, "停止后窗口丢失或进度未归零");
             await(() -> find((View) field(service, "panel"), "收起").isEnabled(), 1000, "停止后收起未恢复");
             runOnMainSync(() -> { find((View) field(service, "panel"), "收起").performClick(); check(field(service, "panel") == null, "停止后无法收起"); service.showPanel(); });
-            pass("真实触摸不能收起演奏悬浮窗、停止后可收起");
+            pass("演奏中隐藏收起、真实触摸停止归零、停止后可收起");
             runOnMainSync(() -> calibrate("test.invalid.package", rotation)); start("1"); SystemClock.sleep(200);
             check(!transport().active() && held() == 0, "目标应用不匹配仍开始演奏"); pass("目标应用检查");
             runOnMainSync(() -> calibrate(keyboard.getPackageName(), (rotation + 1) % 4)); start("1"); SystemClock.sleep(200);
@@ -296,6 +296,92 @@ public final class GestureSmokeTest extends Instrumentation {
         pass("二倍速密集跨音区半音不丢音");
         pass("实际触摸计时、音符完整及无叠按");
     }
+    private void overlayChecks() throws java.io.IOException {
+        runOnMainSync(() -> { service.load(Score.jianpu("1:32 2", 120, "悬浮布局测试")); service.showPanel(); });
+        waitForIdleSync();
+        final int[] expanded = new int[2];
+        runOnMainSync(() -> {
+            checkPanelBounds(); checkPanelButtons("播放", "停止", "校准", "收起");
+            View panel = (View) field(service, "panel"); expanded[0] = panel.getWidth(); expanded[1] = panel.getHeight();
+            report.append("尺寸：屏幕 ").append(size.x).append('×').append(size.y).append("，密度 ").append(getTargetContext().getResources().getDisplayMetrics().density)
+                .append("，字体 ").append(getTargetContext().getResources().getConfiguration().fontScale).append("，普通 ").append(expanded[0]).append('×').append(expanded[1]).append('\n');
+        });
+        saveScreen("overlay-expanded.png");
+        runOnMainSync(() -> { service.toggle(); service.confirmHalfState(false); service.stop(); });
+        waitForIdleSync(); SystemClock.sleep(300);
+        check(!transport().active() && count("downs") == 0 && list("selectors").isEmpty(), "停止后仍执行了等待布局的半音确认");
+        runOnMainSync(service::toggle); waitForIdleSync();
+        runOnMainSync(() -> {
+            check((Boolean) field(service, "awaitingHalf"), "半音确认未展开"); checkPanelBounds(); checkPanelButtons("未选中", "已选中", "取消");
+        });
+        saveScreen("overlay-confirmation.png");
+        runOnMainSync(() -> service.confirmHalfState((Boolean) field(keyboard, "half"))); waitForIdleSync();
+        await(() -> transport().state == Transport.State.COUNTDOWN, 1500, "确认区缩回后未进入倒计时"); waitForIdleSync();
+        runOnMainSync(() -> {
+            check(transport().state == Transport.State.COUNTDOWN, "未进入倒计时");
+            View panel = (View) field(service, "panel");
+            check((Boolean) field(service, "compactPanel") && !find(panel, "校准").isShown() && !find(panel, "收起").isShown(), "倒计时没有隐藏辅助操作");
+            checkPanelBounds(); checkPanelButtons("暂停", "停止");
+            check(panel.getHeight() < expanded[1] && panel.getWidth() * panel.getHeight() < expanded[0] * expanded[1], "播放时未减小遮挡面积");
+            TextView status = (TextView) field(service, "status");
+            check(status.getLineCount() == 1 && status.getLayout().getEllipsisCount(0) == 0, "紧凑进度显示不完整");
+            report.append("尺寸：播放 ").append(panel.getWidth()).append('×').append(panel.getHeight()).append('\n');
+        });
+        saveScreen("overlay-playing.png");
+        await(() -> held() == 1, 1000, "布局切换后未演奏");
+        tap(panelCenter("暂停"));
+        await(() -> transport().state == Transport.State.PAUSED && held() == 0 && !(Boolean) field(service, "compactPanel"), 1500, "真实暂停后未释放并展开");
+        runOnMainSync(() -> { checkPanelBounds(); checkPanelButtons("继续", "停止", "校准", "收起"); });
+        saveScreen("overlay-paused.png");
+        pass("自适应尺寸、半音确认、倒计时与播放精简、真实暂停恢复操作");
+
+        runOnMainSync(() -> { service.toggle(); service.confirmHalfState((Boolean) field(keyboard, "half")); });
+        await(() -> held() == 1, 1500, "继续后未演奏");
+        tap(panelCenter("停止"));
+        await(() -> transport().state == Transport.State.READY && held() == 0 && !(Boolean) field(service, "compactPanel"), 1500, "真实停止后未释放并展开");
+        check(transport().position(SystemClock.uptimeMillis()) == 0, "紧凑条停止未归零");
+        pass("紧凑条真实点击停止、释放并归零");
+
+        start("1:32"); await(() -> held() == 1, 4500, "拖动前未演奏");
+        final PointF[] origin = new PointF[1];
+        runOnMainSync(() -> origin[0] = center((View) field(service, "panelHeader")));
+        long now = SystemClock.uptimeMillis();
+        pointer(now, now, MotionEvent.ACTION_DOWN, origin[0]);
+        try {
+            SystemClock.sleep(650);
+            runOnMainSync(() -> check((Boolean) field(service, "compactPanel"), "手指未抬起就展开，导致按钮位置变化"));
+            pointer(now, SystemClock.uptimeMillis(), MotionEvent.ACTION_MOVE, new PointF(size.x - 4, size.y - 4));
+        } finally { pointer(now, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, new PointF(size.x - 4, size.y - 4)); }
+        await(() -> !(Boolean) field(service, "compactPanel"), 1500, "拖动结束后未恢复操作");
+        runOnMainSync(() -> { checkPanelBounds(); checkPanelButtons("继续", "停止", "校准", "收起"); });
+        saveScreen("overlay-edge.png");
+        pass("播放中拖动保持布局、手动中断暂停、靠边展开仍在屏幕内");
+    }
+    private void checkPanelBounds() {
+        View panel = (View) field(service, "panel"); int[] location = new int[2]; panel.getLocationOnScreen(location);
+        check(panel.getWidth() > 0 && panel.getHeight() > 0 && location[0] >= 0 && location[1] >= 0
+            && location[0] + panel.getWidth() <= size.x && location[1] + panel.getHeight() <= size.y, "悬浮窗超出屏幕边界");
+    }
+    private void checkPanelButtons(String... labels) {
+        View panel = (View) field(service, "panel"); float density = getTargetContext().getResources().getDisplayMetrics().density;
+        for (String label : labels) {
+            TextView button = (TextView) find(panel, label);
+            check(button != null && button.isShown() && button.isEnabled(), "操作按钮不可用：" + label);
+            check(button.getWidth() >= Math.round(48 * density) && button.getHeight() >= Math.round(48 * density), "点击面积过小：" + label);
+            check(button.getLayout() != null && button.getLayout().getLineCount() == 1 && button.getLayout().getEllipsisCount(0) == 0
+                && button.getPaint().measureText(label) <= button.getWidth() - button.getCompoundPaddingLeft() - button.getCompoundPaddingRight(), "按钮文字被截断：" + label);
+        }
+    }
+    private PointF panelCenter(String label) {
+        final PointF[] point = new PointF[1]; runOnMainSync(() -> point[0] = center(find((View) field(service, "panel"), label))); return point[0];
+    }
+    private PointF center(View view) {
+        int[] location = new int[2]; view.getLocationOnScreen(location); return new PointF(location[0] + view.getWidth() / 2f, location[1] + view.getHeight() / 2f);
+    }
+    private void pointer(long down, long time, int action, PointF point) {
+        MotionEvent event = MotionEvent.obtain(down, time, action, point.x, point.y, 0);
+        try { sendPointerSync(event); waitForIdleSync(); } finally { event.recycle(); }
+    }
     private void start(String notes) {
         runOnMainSync(service::stop);
         // 键盘收到 UP 时系统完成回调可能仍在队列中；下一首需等待服务确认释放。
@@ -339,6 +425,12 @@ public final class GestureSmokeTest extends Instrumentation {
         throw new AssertionError(failure + detail[0]);
     }
     private void check(boolean value, String failure) { if (!value) throw new AssertionError(failure); }
+    @Override public void runOnMainSync(Runnable action) {
+        // 将主线程断言送回测试线程，确保失败时仍执行设置恢复并输出完整报告。
+        final Throwable[] failure = new Throwable[1];
+        super.runOnMainSync(() -> { try { action.run(); } catch (Throwable error) { failure[0] = error; } });
+        if (failure[0] != null) throw new AssertionError(failure[0]);
+    }
     private void pass(String value) { report.append("通过：").append(value).append('\n'); }
     private Object field(Object object, String name) {
         try { Field field = object.getClass().getDeclaredField(name); field.setAccessible(true); return field.get(object); }

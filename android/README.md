@@ -1,5 +1,18 @@
 # 三角洲口风琴 · 安卓版
 
+## v0.6.1 自适应悬浮控制条（本地更新包）
+
+本地更新包为 `dist/delta-melodica-android-v0.6.1.apk`，沿用 v0.6.0 正式签名，可覆盖安装并保留曲库、设置与校准。本轮调整悬浮窗，官网当前下载仍为 v0.6.0。
+
+- 窗口不再固定长宽：宽度根据屏幕可用短边计算，高度随可见内容和系统字体自然撑开；旋转、显示密度和字体变化时重新布局。按钮保留至少 48dp 的点击面积，文字较大时优先保证操作完整。
+- 倒计时与播放时自动变为单行控制条，仅显示倒计时／状态、时间进度、「暂停」「停止」与拖动区域；隐藏曲名、说明、「校准」「收起」。暂停、停止或结束并释放触摸后自动恢复完整操作。
+- 按住控制条期间保持按钮位置，避免手势中断后展开导致误触。拖动时主动暂停，松手后恢复完整操作；靠近屏幕边缘展开会自动移回可见范围。
+- 半音确认仍在播放／继续前显示；倒计时与播放中的收起保护继续有效。
+
+![播放中的自适应控制条](docs/overlay-responsive-playing.png)
+
+![小屏横屏控制条](docs/overlay-responsive-small.png)
+
 ## v0.6.0 已正式上线
 
 2026-09-14 用户确认真机试奏正常并授权发布。官网首屏和底部下载区已增加「下载 Android 版」，[安卓下载页](https://aiygzn.top/melodica/android.html)和[正式 APK](https://aiygzn.top/melodica/downloads/delta-melodica-android-v0.6.0.apk)均可访问。公开下载、签名及实际浏览器下载校验通过，完整记录见 [发布结果](../docs/android-v0.6.0-release.md)。
@@ -49,7 +62,7 @@ adb -s 测试设备序列号 shell am instrument -w top.aiygzn.melodica.test/top
 3. 设置速度和移调，点击「显示悬浮控制条」。进入三角洲手游的口风琴演奏画面。
 4. 点悬浮窗「校准」，依次点 **1、2、3、4、5、6、7、高音 1、半音、升调、自然音、降调** 的中心，共 12 处。校准层只记录位置，不会将这些点击传给游戏。校准同时绑定当前应用、屏幕尺寸和旋转方向。
 5. 将悬浮窗拖到不遮挡这 12 个按钮的位置。点「播放」，按游戏当前状态选择半音「未选中」或「已选中」，倒计时中会预选首音的变音状态，3 秒后才按下音键。「暂停」保留位置；「继续」也需确认半音当前状态，再从该处续播；「停止」回到曲首。
-6. **倒计时和演奏期间「收起」置灰禁用**；暂停或停止并完成触摸释放后恢复可用，曲目结束也会恢复。日常结束使用主界面「停止并隐藏悬浮窗」，停止归零并保留无障碍授权，下次直接点「显示悬浮控制条」。如需关闭授权，使用「管理无障碍授权」进入系统页面关闭服务。
+6. **v0.6.1 倒计时和演奏期间自动精简控制条，隐藏「校准」「收起」、曲名和说明**；暂停或停止并完成触摸释放后恢复，曲目结束也会恢复。拖动会暂停，移到合适位置后点「继续」。日常结束使用主界面「停止并隐藏悬浮窗」，停止归零并保留无障碍授权，下次直接点「显示悬浮控制条」。如需关闭授权，使用「管理无障碍授权」进入系统页面关闭服务。
 
 从 v0.1 升级后保留曲库，但需要重新完成 12 点校准；已有 v0.2 及后续版本的曲库和 12 点校准可继续使用。可以先在「本地测试键盘」检查触摸和选中状态；进入真实游戏后需重新校准。更换分辨率、屏幕方向或游戏键位后也应重新校准。
 
@@ -113,6 +126,8 @@ adb -s 你的测试设备序列号 shell am instrument -w -r top.aiygzn.melodica
 adb -s 你的测试设备序列号 shell am instrument -w -r -e suite timing top.aiygzn.melodica.test/top.aiygzn.melodica.GestureSmokeTest
 # 专用测试设备上的授权保留、重开应用、连接状态和按需申请验证
 adb -s 你的测试设备序列号 shell am instrument -w -r -e suite permissions top.aiygzn.melodica.test/top.aiygzn.melodica.GestureSmokeTest
+# 悬浮窗自适应、半音确认、真实暂停／停止、拖动与边界验证；可在不同尺寸及字体设置下重复执行
+adb -s 你的测试设备序列号 shell am instrument -w -r -e suite overlay top.aiygzn.melodica.test/top.aiygzn.melodica.GestureSmokeTest
 # 线上曲库验证，不要求开启无障碍演奏服务；会读取官网并验证当前目录中的 MIDI
 adb -s 你的测试设备序列号 shell am instrument -w -r -e suite online top.aiygzn.melodica.test/top.aiygzn.melodica.GestureSmokeTest
 ```
