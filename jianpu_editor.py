@@ -5,7 +5,7 @@ import re
 import tkinter as tk
 from tkinter import font as tkfont
 
-from music import (JIANPU_SPACE_KEY, JIANPU_SPACE_NOTE, SCALE, jianpu_space_lines, jianpu_lyric_syllables,
+from music import (JIANPU_SPACE_KEY, JIANPU_SPACE_NOTE, JIANPU_SPACE_DURATION, SCALE, jianpu_space_lines, jianpu_lyric_syllables,
                    parse_jianpu_space, pitch_name)
 
 
@@ -18,6 +18,7 @@ class Glyph:
     line: int
     parts: tuple = ()
     lyric: str = ""
+    duration: str = ""
 
 
 def score_glyphs(text):
@@ -26,7 +27,7 @@ def score_glyphs(text):
     structure = re.compile(r"\|:|:\|:|:\||\[1|\[2|\|[|\]]?|[()~]")
     chord = re.compile(r"[A-G][#b]?(?:(?:maj|min|m|dim|aug|sus|add)?(?:[2-9]|11|13)?)(?:/[A-G][#b]?)?")
     for number, line, positions in jianpu_space_lines(text):
-        if not line:
+        if not line or line.startswith('//'):
             continue
         if line.startswith('L:'):
             try:
@@ -52,9 +53,13 @@ def score_glyphs(text):
                 match, kind = JIANPU_SPACE_NOTE.match(line, index), 'note'
             if not match:
                 match, kind = re.compile(r'[ac-mo-z]+|.').match(line, index), 'annotation'
-            result.append(Glyph(kind, match[0], positions[index], positions[match.end()-1]+1,
-                                number, match.groups()))
-            index = match.end()
+            end = match.end()
+            duration = JIANPU_SPACE_DURATION.match(line, end) if kind == 'note' else None
+            if duration:
+                end = duration.end()
+            result.append(Glyph(kind, line[index:end], positions[index], positions[end-1]+1,
+                                number, match.groups(), duration=duration[1] if duration else ''))
+            index = end
     notes = [glyph for glyph in result if glyph.kind == 'note' and glyph.parts[1] not in ('0', '-')]
     for glyph, lyric in zip(notes, lyrics):
         glyph.lyric = '' if lyric in ('_', '*') else lyric.strip('"')
@@ -177,6 +182,8 @@ class ScorePreview(tk.Frame):
                 duration = ' '.join('-' * len(length)) if len(length) <= 6 else f'- - …({len(length)+1}拍)'
             lyric = lyric if len(lyric) <= 24 else lyric[:23] + '…'
             advance = max(40 + self.font.measure(duration), self.small.measure(lyric) + 12)
+            if glyph.duration:
+                advance = max(advance, self.small.measure(glyph.duration + '拍') + 12)
         else:
             label = '1=' + ''.join(glyph.parts) if glyph.kind == 'key' else glyph.text
             advance = max(24, self.small.measure(label) + 16)
@@ -238,6 +245,10 @@ class ScorePreview(tk.Frame):
                 center = x + 14
                 slurs = [(center, y) if point is None else point for point in slurs]
                 canvas.create_text(center, y, text=degree, font=self.font, fill='#252b24', tags=tag)
+                if glyph.duration:
+                    # 非二分时值直接标明拍数，避免把三连音画成普通四分音符。
+                    canvas.create_text(x+advance/2-4, y-height*1.12, text=glyph.duration+'拍',
+                                       font=self.small, fill='#486346', tags=(tag, 'precise_duration'))
                 if accidental:
                     label = accidental.replace('#', '♯').replace('b', '♭').replace('n', '♮')
                     canvas.create_text(center-12, y-height*.35, text=label, font=self.small, anchor='e', tags=tag)

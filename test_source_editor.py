@@ -14,6 +14,24 @@ SOURCE = '/key(A3)\nｂｐｍ108\n1_2_3-|1\nL:甲乙丙"(+1key)丁"\n/key(C4)\nb
 
 
 class SourceNotationTests(unittest.TestCase):
+    def test_precise_duration_is_one_selectable_glyph_with_full_timing(self):
+        text = '/key(E4)\nbpm120\n// 第3小节\n（１：１／６ ２：１／６ ３：１／６） 0:1/2'
+        glyphs = [g for g in score_glyphs(text) if g.kind == 'note']
+        self.assertEqual([text[g.start:g.end] for g in glyphs],
+                         ['１：１／６', '２：１／６', '３：１／６', '0:1/2'])
+        self.assertEqual([g.duration for g in glyphs], ['1/6'] * 3 + ['1/2'])
+        trace = []
+        first = glyphs[0]
+        selected = select_jianpu_space(text, '精确片段', first.start, first.end, trace=trace)
+        self.assertEqual(selected.notes[0].pitch, 64)
+        self.assertAlmostEqual(selected.duration, 1/12)
+        self.assertEqual(trace[0][:2], (first.start, first.end))
+        with self.assertRaisesRegex(ValueError, '完整音符'):
+            select_jianpu_space(text, '不完整', first.start, first.end-1)
+        moved = transpose_source(text, 2, 'score')
+        self.assertIn('１：１／６', moved)
+        self.assertEqual(score_metadata(moved), ('F#4', 120))
+
     def test_glyph_positions_match_original_fullwidth_and_lyrics(self):
         text = '  /key(A3)\r\nｂｐｍ１０８\r\n  １_２,３\nL:"前奏😊"*甲'
         glyphs = score_glyphs(text)
@@ -94,6 +112,34 @@ class SourceEditorTests(ScoreEditorTests):
         atomic_json(path, data)
         self.app._load_library(path)
         return self.editor(), data, path
+
+    def test_precise_score_shows_preview_preserves_toolbar_timing_and_reopens(self):
+        source = '/key(E4)\nbpm120\n(1:1/6 2:1/6 3:1/6) 5:15/8 0:1/8'
+        editor, _, _ = self.source_editor(source)
+        self.assertTrue(editor.is_source)
+        canvas = editor.score_preview.canvas
+        labels = [canvas.itemcget(item, 'text') for item in canvas.find_withtag('precise_duration')]
+        self.assertEqual(labels, ['1/6拍'] * 3 + ['15/8拍', '1/8拍'])
+        glyph = next(g for g in editor.score_preview.glyphs if g.kind == 'note')
+        editor.select_range(glyph.start, glyph.end)
+        editor.insert_symbol("'")
+        editor.validate()
+        self.assertIn("1':1/6", editor.text.get('1.0', 'end-1c'))
+        glyph = next(g for g in editor.score_preview.glyphs if g.kind == 'note')
+        editor.select_range(glyph.start, glyph.end)
+        editor.insert_symbol('.')
+        editor.validate()
+        self.assertIn("1':1/4", editor.text.get('1.0', 'end-1c'))
+        glyph = next(g for g in editor.score_preview.glyphs if g.kind == 'note')
+        editor.select_range(glyph.start, glyph.end)
+        editor.insert_symbol('_')
+        editor.validate()
+        self.assertIn("1'_", editor.text.get('1.0', 'end-1c'))
+        expected = from_song(editor.parsed())
+        editor.save()
+        reopened = self.editor()
+        self.assertTrue(reopened.is_source)
+        self.assertEqual(from_song(reopened.parsed()), expected)
 
     def test_legacy_import_recovers_readable_source_and_saves_reopens_it(self):
         editor, data, path = self.source_editor()
