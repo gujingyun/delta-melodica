@@ -2,6 +2,8 @@
 
 ## 安卓 v0.6.0 官网发布
 
+2026-09-14 已正式上线：[官网首页](https://aiygzn.top/melodica/)、[安卓下载页](https://aiygzn.top/melodica/android.html)。用户确认真机试奏通过后发布，公开下载及签名校验通过；发布结果见 [上线记录](../docs/android-v0.6.0-release.md)。
+
 首页首屏和底部下载区均提供「下载 Android 版」，进入 `android.html` 后下载正式签名 APK。安卓使用 `android-version.json` 独立版本清单，`android-data.html` 展示与 App 一致的权限和数据说明。
 
 发行包为 `downloads/delta-melodica-android-v0.6.0.apk`，67,932 字节，SHA-256：`c08a157e1e72f276961dfdfaf66c86859a50c8e474804de75dc039989c9fbb39`。文件不提交 Git；只发布公开静态页面、截图、版本清单与 Nginx 下载配置。旧调试预览包应先保留曲谱再切换正式签名版本，网页含完整迁移说明。
