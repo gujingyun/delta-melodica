@@ -12,6 +12,7 @@ import unicodedata
 
 SCALE = (0, 2, 4, 5, 7, 9, 11)
 JIANPU_SPACE_NOTE = re.compile(r"(#{1,2}|b{1,2}|n)?([0-7]|-)((?:'+|,+)?)(-+|=*_?)(\.{0,2})")
+JIANPU_SPACE_DURATION = re.compile(r":(\d+(?:/\d+|\.\d+)?)")
 JIANPU_SPACE_KEY = re.compile(r"/key\(([A-Ga-g])([#b]?)([0-9]?)\)")
 
 
@@ -276,7 +277,7 @@ def parse_jianpu_space(text: str, title: str, *, mode="score", trace=None) -> tu
     structures = {"|:": "repeat_start", ":|": "repeat_end", "[1": "ending1", "[2": "ending2",
                   "(": "slur_start", ")": "slur_end", "~": "tie"}
     for line_number, line, positions in music_lines:
-        if not line:
+        if not line or line.startswith("//"):
             continue
         tempo = re.fullmatch(r"bpm\s*[:=]?\s*(\d+(?:\.\d+)?)", line, re.IGNORECASE)
         if tempo:
@@ -340,13 +341,27 @@ def parse_jianpu_space(text: str, title: str, *, mode="score", trace=None) -> tu
                 raise ValueError(f"第 {line_number} 行音符时值超出支持范围。")
             beats = 1 + len(length) if length.startswith("-") else 0.5 ** (2 * length.count("=") + length.count("_"))
             beats *= 2 - 0.5 ** len(dots)
+            token_end = match.end()
+            duration = JIANPU_SPACE_DURATION.match(line, token_end)
+            if duration:
+                if mode != "score":
+                    raise ValueError(f"第 {line_number} 行精确拍数需使用按谱面规则模式。")
+                if length or dots or degree == "-":
+                    raise ValueError(f"第 {line_number} 行精确拍数不能与减时、增时、附点或延音符混用。")
+                try:
+                    beats = float(Fraction(duration[1]))
+                except (ValueError, ZeroDivisionError, OverflowError):
+                    raise ValueError(f"第 {line_number} 行精确拍数无效。") from None
+                if not 0.000000001 <= beats <= 9000:
+                    raise ValueError(f"第 {line_number} 行精确拍数需在 0.000000001～9000 拍之间。")
+                token_end = duration.end()
             offset = 12 * (octave.count("'") - octave.count(","))
             offset += (accidental or "").count("#") - (accidental or "").count("b")
             events.append(_JianpuEvent("note", (degree, offset, beats), line_number, source_count,
-                                       (positions[index], positions[match.end()-1]+1)))
+                                       (positions[index], positions[token_end-1]+1)))
             if degree not in ("0", "-"):
                 source_count += 1
-            index = match.end()
+            index = token_end
     if key_changes and max(key_changes) >= source_count:
         raise ValueError("歌词中的转调指令没有对应音符，请核对原谱的歌词占位。")
     if source_count > 30000:

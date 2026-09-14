@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 import uuid
 from bisect import bisect_right
+from fractions import Fraction
 
 from account_client import atomic_json
 from cloud_score import from_song, to_song
@@ -104,7 +105,7 @@ class ScoreEditor:
         help_box = tk.Frame(self.dialog, bg=BG, highlightbackground=LINE, highlightthickness=1)
         help_box.pack(fill="x", padx=24, pady=(0, 10))
         help_text = ("原谱写法：1' 高八度  1, 低八度  1_ 半拍  1= 四分之一拍  1- 两拍  | 小节  L: 歌词\n"
-                     "调号和 BPM 写在谱文中；点击右侧音符定位文字，选段试听保留调号、变速和转调。" if self.is_source else
+                     "1:1/3 表示精确三分之一拍，谱面标明拍数；点击右侧音符定位文字，选段试听保留调号与变速。" if self.is_source else
                      "1～7 音阶   +1 高八度   -1 低八度   #4 升半音   b3 降半音   0 休止\n"
                      "1:2 两拍；1:1/2 半拍；(1 2 3) 连奏。空格分隔，试听时选中完整音符及括号。")
         tk.Label(help_box, text=help_text, wraplength=850 if self.is_source else 0,
@@ -258,6 +259,7 @@ class ScoreEditor:
                       ((g.start == start and g.end == end) if selection else (g.start < start <= g.end))), None)
         if glyph and symbol != "|":
             accidental, degree, octave, length, dots = glyph.parts
+            duration = glyph.duration
             accidental = accidental or ""
             if degree in ("0", "-") and symbol in ("#", "'", ","):
                 self.status.set("休止符和延音线不需要八度或升降号。")
@@ -268,11 +270,16 @@ class ScoreEditor:
                 octave = octave[:-1] if octave and not octave.startswith(symbol) else octave + symbol
             elif symbol in ("_", "="):
                 length = symbol
+                duration = ""
             elif symbol == "-":
                 length = length + "-" if length.startswith("-") else "-"
+                duration = ""
             elif symbol == ".":
-                dots = (dots + ".")[:2]
-            replacement = accidental + degree + octave + length + dots
+                if duration:
+                    duration = str(Fraction(duration) * Fraction(3, 2))
+                else:
+                    dots = (dots + ".")[:2]
+            replacement = accidental + degree + octave + length + dots + (":" + duration if duration else "")
             self.replace_range(glyph.start, glyph.end, replacement)
         else:
             # 小节线添加到所选音符后；不会用一个符号覆盖整段旋律。

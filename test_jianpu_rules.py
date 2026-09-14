@@ -21,6 +21,28 @@ class JianpuRuleTests(unittest.TestCase):
     def pitches(self, text, **kwargs):
         return [n.pitch for n in self.parse(text, **kwargs).notes]
 
+    def test_precise_beats_keep_tuplets_ties_repeats_and_rests(self):
+        trace = []
+        source = '// 第2页，120 BPM；注释里的数字不演奏\n|:(1:1/3 2:1/3 3:1/3) 0:1/2:| 4:1/4~|4:3/4'
+        song = self.parse(source, trace=trace)
+        self.assertEqual([n.pitch for n in song.notes], [60, 62, 64] * 2 + [65])
+        self.assertAlmostEqual(song.duration, 2)
+        self.assertEqual(len(trace), 10)
+        self.assertTrue(all(n.legato for n in song.notes))
+        for note in song.notes[:3] + song.notes[3:6]:
+            self.assertAlmostEqual(note.end - note.start, 1/6)
+        self.assertAlmostEqual(song.notes[3].start, .75)
+        self.assertEqual((song.notes[-1].start, song.notes[-1].end), (1.5, 2))
+        self.assertAlmostEqual(self.parse('1:0.125 0:0.875').duration, .5)
+
+    def test_precise_beats_reject_invalid_or_ambiguous_values(self):
+        for token in ('1:0', '1:1/0', '1:9001', '1:1/10000000000',
+                      '1_:1/3', '1.:1/3', '1 -:1/3', '1:1/', '1:1.2.3'):
+            with self.subTest(token=token), self.assertRaises(ValueError):
+                self.parse(token)
+        with self.assertRaisesRegex(ValueError, '按谱面规则'):
+            self.parse('1:1/3', mode='source')
+
     def test_repeat_nested_adjacent_and_implicit_starts(self):
         for text, pitches in (
                 ('0 |:1 2:|3 0', [60, 62, 60, 62, 64]),
