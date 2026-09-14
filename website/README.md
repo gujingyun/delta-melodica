@@ -2,6 +2,10 @@
 
 ## 安卓 v0.6.0 官网发布
 
+安卓页 `android.html#tutorial` 提供手机版安装使用教程，首屏「观看安装使用教程」跳转至播放器。复用本站 `video-player.js` 和 hls.js，点击后加载视频，支持拖动、全屏及 MP4 兼容播放。素材为用户提供的 2026-09-14 手机实录，约 2 分钟；网页副本保留 1608×1080、60 帧及原声，开启 MP4 faststart，并拆成 30 个约 4 秒的 HLS 分片。
+
+教程资源：`assets/android-install-20260914.jpg`、`videos/android-install-20260914.mp4`、`videos/android-install-20260914/index.m3u8` 和同目录 `segment-*.ts`。MP4 与 TS 不提交 Git，发布时必须一并上传。沿用已有 `/melodica/videos/` 配置，先校验媒体再切换安卓页，不需重载 Nginx。
+
 2026-09-14 已正式上线：[官网首页](https://aiygzn.top/melodica/)、[安卓下载页](https://aiygzn.top/melodica/android.html)。用户确认真机试奏通过后发布，公开下载及签名校验通过；发布结果见 [上线记录](../docs/android-v0.6.0-release.md)。
 
 首页首屏和底部下载区均提供「下载 Android 版」，进入 `android.html` 后下载正式签名 APK。安卓使用 `android-version.json` 独立版本清单，`android-data.html` 展示与 App 一致的权限和数据说明。
