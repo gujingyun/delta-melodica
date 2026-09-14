@@ -6,8 +6,9 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const base = process.env.ANDROID_SITE_TEST_URL || 'http://127.0.0.1:8767/';
 assert.ok(['127.0.0.1', 'localhost'].includes(new URL(base).hostname));
-const output = path.join(__dirname, '..', 'work', 'android-release-v060');
+const output = process.env.ANDROID_SITE_TEST_OUTPUT || path.join(__dirname, '..', 'work', 'android-release-site');
 (async () => {
+  fs.mkdirSync(output, {recursive:true});
   const browser = await chromium.launch({channel:'chrome', headless:true});
   try {
     const page = await browser.newPage();

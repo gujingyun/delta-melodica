@@ -17,7 +17,7 @@ PORT = 3002
 DATA_DIR = Path(os.environ.get("MELODICA_STATS_DIR", "/var/lib/delta-melodica-stats"))
 DATA_FILE = DATA_DIR / "stats.json"
 DOWNLOAD_LOCATION = "/melodica/downloads/delta-melodica-v0.15.1.exe"
-ANDROID_DOWNLOAD_LOCATION = "/melodica/downloads/delta-melodica-android-v0.6.0.apk"
+ANDROID_DOWNLOAD_LOCATION = "/melodica/downloads/delta-melodica-android-v0.6.3.apk"
 
 
 def now_text() -> str:

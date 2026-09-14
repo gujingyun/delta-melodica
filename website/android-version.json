@@ -1,15 +1,15 @@
 {
   "platform": "android",
-  "version": "0.6.0",
-  "versionCode": 6,
+  "version": "0.6.3",
+  "versionCode": 9,
   "minSdk": 26,
-  "file": "downloads/delta-melodica-android-v0.6.0.apk",
-  "size": 67932,
-  "sha256": "c08a157e1e72f276961dfdfaf66c86859a50c8e474804de75dc039989c9fbb39",
+  "file": "downloads/delta-melodica-android-v0.6.3.apk",
+  "size": 69292,
+  "sha256": "59552ed90bbd01efc114598d06b116f093a1a8e873c96045cdd3d9f480093dd9",
   "certificateSha256": "fbb496e1dfe34cbaefe4e07fc6ab82480ca1b52807c5d86ac7fa49aa1231154c",
   "notes": [
-    "支持官网 MIDI 和 JSON 曲谱",
-    "正式签名及安装包校验",
-    "离线权限与数据说明"
+    "悬浮窗根据屏幕和字体大小自适应",
+    "播放时精简为进度、暂停、停止与拖动",
+    "半音未选中提示显示 3 秒后自动隐藏并演奏，无需确认"
   ]
 }

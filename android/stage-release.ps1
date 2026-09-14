@@ -1,4 +1,4 @@
-param([string]$Version = '0.6.0')
+param([string]$Version = '0.6.3')
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw '版本号需为三段数字。' }
 $taskRepo = Split-Path $PSScriptRoot -Parent
@@ -38,6 +38,6 @@ Get-ChildItem -LiteralPath (Join-Path $taskRepo 'website/videos/android-install-
     platform = 'android'; version = $Version; versionCode = $taskMetadata.versionCode
     minSdk = $taskMetadata.minSdk; file = "downloads/$taskBase.apk"; size = $taskMetadata.size
     sha256 = $taskMetadata.sha256; certificateSha256 = $taskMetadata.certificateSha256
-    notes = @('支持官网 MIDI 和 JSON 曲谱', '正式签名及安装包校验', '离线权限与数据说明')
+    notes = @('悬浮窗根据屏幕和字体大小自适应', '播放时精简为进度、暂停、停止与拖动', '半音未选中提示显示 3 秒后自动隐藏并演奏，无需确认')
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $taskSite 'android-version.json') -Encoding utf8
 Write-Output "官网文件已暂存，尚未上传：$taskSite"
