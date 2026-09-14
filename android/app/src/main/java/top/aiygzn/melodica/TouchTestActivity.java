@@ -30,7 +30,7 @@ public final class TouchTestActivity extends Activity {
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
         LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setPadding(24, 24, 24, 24); setContentView(root);
         TextView title = new TextView(this); title.setText("本地触摸测试  ·  八个音键 + 四个变音按钮"); title.setTextSize(20); root.addView(title);
-        TextView help = new TextView(this); help.setText("校准顺序：1～高1、半音、升调、自然音、降调。音区三选一，半音独立开关；播放前确认选中状态。"); root.addView(help);
+        TextView help = new TextView(this); help.setText("校准顺序：1～高1、半音、升调、自然音、降调。音区三选一，半音独立开关；播放前请将半音设为未选中。"); root.addView(help);
         state = new TextView(this); state.setTextSize(18); root.addView(state); update("等待演奏");
         View space = new View(this); root.addView(space, new LinearLayout.LayoutParams(-1, 0, 1));
         LinearLayout modes = new LinearLayout(this); root.addView(modes, new LinearLayout.LayoutParams(-1, 120));

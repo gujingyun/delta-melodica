@@ -7,8 +7,8 @@ android {
         applicationId 'top.aiygzn.melodica'
         minSdk 26
         targetSdk 34
-        versionCode 7
-        versionName '0.6.1'
+        versionCode 8
+        versionName '0.6.2'
         testInstrumentationRunner project.findProperty('testRunner') ?: 'top.aiygzn.melodica.GestureSmokeTest'
     }
     buildFeatures { buildConfig true }

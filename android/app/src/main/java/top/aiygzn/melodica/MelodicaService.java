@@ -64,7 +64,7 @@ public final class MelodicaService extends AccessibilityService {
         @Override public void run() {
             if (destroyed) return;
             if (transport != null && transport.active() && !ready()) pause("已离开目标窗口或屏幕发生变化");
-            if (awaitingHalf && !ready()) pause("画面变化，请重新确认半音状态");
+            if (awaitingHalf && !ready()) pause("画面变化，请先将半音设为未选中后再播放");
             if (calibration != null && !calibration.valid()) closeCalibration();
             render(); handler.postDelayed(this, 100);
         }
@@ -118,10 +118,9 @@ public final class MelodicaService extends AccessibilityService {
         calibrate = button(controls, "校准", this::startCalibration);
         collapse = button(controls, "收起", () -> { if (canCollapse()) { stop(); hidePanel(); } });
         halfConfirmation = new LinearLayout(this); halfConfirmation.setOrientation(LinearLayout.VERTICAL);
-        TextView question = new TextView(this); question.setText("游戏内「半音」当前是否选中？"); question.setTextColor(Color.WHITE); question.setTextSize(13); halfConfirmation.addView(question);
+        TextView question = new TextView(this); question.setText("请先将游戏内「半音」设为未选中。"); question.setTextColor(Color.WHITE); question.setTextSize(13); halfConfirmation.addView(question);
         LinearLayout choices = new LinearLayout(this); halfConfirmation.addView(choices);
-        button(choices, "未选中", () -> confirmHalfState(false));
-        button(choices, "已选中", () -> confirmHalfState(true));
+        button(choices, "开始演奏", this::confirmHalfOff);
         button(choices, "取消", () -> { dismissHalfConfirmation(); message = "已取消播放"; render(); });
         panel.addView(halfConfirmation); halfConfirmation.setVisibility(View.GONE);
         panelParams = new WindowManager.LayoutParams(panelWidth(false), WindowManager.LayoutParams.WRAP_CONTENT,
@@ -234,7 +233,7 @@ public final class MelodicaService extends AccessibilityService {
         if (inFlight || held != null) { notifyUser("正在释放触摸，请稍后重试"); return; }
         if (!validateStart()) return;
         showPanel(); awaitingHalf = true; tones.invalidate();
-        halfConfirmation.setVisibility(View.VISIBLE); message = "先确认半音当前状态，再开始演奏"; render();
+        halfConfirmation.setVisibility(View.VISIBLE); message = "准备好后点击「开始演奏」"; render();
     }
     private boolean validateStart() {
         if (!ready()) { notifyUser("请进入目标窗口并完成 12 点校准；升级或旋转屏幕后需重新校准"); return false; }
@@ -253,7 +252,7 @@ public final class MelodicaService extends AccessibilityService {
         awaitingHalf = false; halfConfirmationSerial++;
         if (halfConfirmation != null) halfConfirmation.setVisibility(View.GONE);
     }
-    void confirmHalfState(boolean selected) {
+    void confirmHalfOff() {
         if (!awaitingHalf) return;
         halfConfirmation.setVisibility(View.GONE);
         View confirmedPanel = panel;
@@ -265,7 +264,7 @@ public final class MelodicaService extends AccessibilityService {
                 if (!awaitingHalf || confirmation != halfConfirmationSerial || panel != confirmedPanel || destroyed) return true;
                 dismissHalfConfirmation();
                 if (transport == null || transport.active() || inFlight || held != null || !validateStart()) return true;
-                tones.confirmHalf(selected);
+                tones.confirmHalf(false);
                 transport.play(SystemClock.uptimeMillis(), transport.state == Transport.State.PAUSED ? 0 : 3000);
                 message = "正在演奏"; render(); schedule(0); return true;
             }
@@ -302,7 +301,7 @@ public final class MelodicaService extends AccessibilityService {
         if (index < 0) { schedule(15); return; }
         Score.Note n = score.notes.get(index);
         Score.Fingering fingering = fingerings[index];
-        if (!tones.known()) { pause("变音状态不明，请确认半音后继续"); return; }
+        if (!tones.known()) { pause("变音状态不明，请先将半音设为未选中后继续"); return; }
         int selector = tones.next(fingering);
         if (selector >= 0) {
             // 必须先抬起音键，再依次点击音区和半音；这些按钮不能与音键一起长按。

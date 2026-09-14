@@ -93,10 +93,10 @@ public final class GestureSmokeTest extends Instrumentation {
             check(count("downs") == 0 && list("selectors").isEmpty(), "校准穿透点击了测试键盘");
             pass("旧校准失效与真实点击完成 12 点校准");
 
-            runOnMainSync(() -> { service.toggle(); check((Boolean) field(service, "awaitingHalf"), "没有请求半音状态"); });
+            runOnMainSync(() -> { service.toggle(); checkHalfPrompt(); });
             SystemClock.sleep(200);
             check(!transport().active() && list("selectors").isEmpty(), "确认半音前发送了触摸");
-            saveScreen("half-confirmation-v02.png");
+            saveScreen("half-prompt-v062.png");
             runOnMainSync(service::stop); pass("半音未确认时不演奏");
             // 重复音、休止和长音必须产生完整 DOWN / UP，续接不能成为空事件。
             start("1 1:2 0 2");
@@ -117,7 +117,7 @@ public final class GestureSmokeTest extends Instrumentation {
             long position = transport().position(SystemClock.uptimeMillis()); int down = count("downs"); SystemClock.sleep(250);
             check(position > 0 && transport().position(SystemClock.uptimeMillis()) == position && count("downs") == down, "暂停位置漂移"); pass("暂停释放与位置保持");
             check(find((View) field(service, "panel"), "收起").isEnabled(), "暂停后收起未恢复");
-            runOnMainSync(() -> { service.toggle(); service.confirmHalfState(false); }); await(() -> count("downs") > down, 1000, "续播没有重新按下剩余长音");
+            runOnMainSync(() -> { service.toggle(); prepareHalfOff(); }); await(() -> count("downs") > down, 1000, "续播没有重新按下剩余长音");
             runOnMainSync(service::stop); await(() -> held() == 0, 600, "停止未释放触摸");
             check(transport().position(SystemClock.uptimeMillis()) == 0, "停止未归零"); pass("续播、停止归零与释放");
 
@@ -134,15 +134,21 @@ public final class GestureSmokeTest extends Instrumentation {
             runOnMainSync(() -> find(keyboard.getWindow().getDecorView(), "半音").performClick());
             check((Boolean) field(keyboard, "half"), "测试半音初态没有选中");
             noteStart = list("pitches").size();
-            start("1 #1"); await(() -> !transport().active() && held() == 0, 6000, "半音初态选中时未完成");
-            check(list("pitches").subList(noteStart, list("pitches").size()).equals(Arrays.asList(60, 61)), "半音初态确认后音高错误"); pass("初始半音已选中时正确开关");
+            runOnMainSync(() -> { service.load(Score.jianpu("1 #1", 120, "半音关闭提示测试")); service.toggle(); checkHalfPrompt(); });
+            SystemClock.sleep(200);
+            check(!transport().active() && (Boolean) field(keyboard, "half") && list("pitches").size() == noteStart, "提示期间自动切换半音或演奏");
+            tap(points[Score.HALF]); check(!(Boolean) field(keyboard, "half"), "按提示手动关闭半音失败");
+            tap(panelCenter("开始演奏"));
+            int expectedPitches = noteStart + 2;
+            await(() -> !transport().active() && held() == 0 && list("pitches").size() == expectedPitches, 6000, "关闭半音后未完成演奏");
+            check(list("pitches").subList(noteStart, list("pitches").size()).equals(Arrays.asList(60, 61)), "按提示关闭半音后音高错误"); pass("半音关闭提示、手动关闭后真实点击开始、自然音与半音正确");
 
             start("+#2:8");
             await(() -> transport().active() && (Boolean) field(service, "inFlight") && held() == 0, 4500, "未捕获变音点击阶段");
             runOnMainSync(() -> service.pause("变音点击期间暂停"));
             int interruptedNotes = count("downs"); SystemClock.sleep(250);
             check(!transport().active() && count("downs") == interruptedNotes && !((ToneState) field(service, "tones")).known(), "旧变音回调继续发键或恢复过期状态");
-            runOnMainSync(() -> { service.toggle(); check((Boolean) field(service, "awaitingHalf"), "中断后未重新确认半音"); service.confirmHalfState((Boolean) field(keyboard, "half")); });
+            runOnMainSync(() -> { service.toggle(); checkHalfPrompt(); prepareHalfOff(); });
             await(() -> held() == 1, 1000, "变音中断后无法续播");
             check(list("pitches").get(list("pitches").size() - 1) == 75, "变音中断后续播音高错误");
             runOnMainSync(service::stop); await(() -> held() == 0, 600, "变音续播后停止未释放"); pass("变音点击中暂停、旧回调失效及重新同步续播");
@@ -307,15 +313,15 @@ public final class GestureSmokeTest extends Instrumentation {
                 .append("，字体 ").append(getTargetContext().getResources().getConfiguration().fontScale).append("，普通 ").append(expanded[0]).append('×').append(expanded[1]).append('\n');
         });
         saveScreen("overlay-expanded.png");
-        runOnMainSync(() -> { service.toggle(); service.confirmHalfState(false); service.stop(); });
+        runOnMainSync(() -> { service.toggle(); service.confirmHalfOff(); service.stop(); });
         waitForIdleSync(); SystemClock.sleep(300);
         check(!transport().active() && count("downs") == 0 && list("selectors").isEmpty(), "停止后仍执行了等待布局的半音确认");
         runOnMainSync(service::toggle); waitForIdleSync();
         runOnMainSync(() -> {
-            check((Boolean) field(service, "awaitingHalf"), "半音确认未展开"); checkPanelBounds(); checkPanelButtons("未选中", "已选中", "取消");
+            checkHalfPrompt(); checkPanelBounds(); checkPanelButtons("开始演奏", "取消");
         });
         saveScreen("overlay-confirmation.png");
-        runOnMainSync(() -> service.confirmHalfState((Boolean) field(keyboard, "half"))); waitForIdleSync();
+        tap(panelCenter("开始演奏")); waitForIdleSync();
         await(() -> transport().state == Transport.State.COUNTDOWN, 1500, "确认区缩回后未进入倒计时"); waitForIdleSync();
         runOnMainSync(() -> {
             check(transport().state == Transport.State.COUNTDOWN, "未进入倒计时");
@@ -335,7 +341,7 @@ public final class GestureSmokeTest extends Instrumentation {
         saveScreen("overlay-paused.png");
         pass("自适应尺寸、半音确认、倒计时与播放精简、真实暂停恢复操作");
 
-        runOnMainSync(() -> { service.toggle(); service.confirmHalfState((Boolean) field(keyboard, "half")); });
+        runOnMainSync(() -> { service.toggle(); checkHalfPrompt(); prepareHalfOff(); });
         await(() -> held() == 1, 1500, "继续后未演奏");
         tap(panelCenter("停止"));
         await(() -> transport().state == Transport.State.READY && held() == 0 && !(Boolean) field(service, "compactPanel"), 1500, "真实停止后未释放并展开");
@@ -386,7 +392,18 @@ public final class GestureSmokeTest extends Instrumentation {
         runOnMainSync(service::stop);
         // 键盘收到 UP 时系统完成回调可能仍在队列中；下一首需等待服务确认释放。
         await(() -> !(Boolean) field(service, "inFlight") && field(service, "held") == null, 1000, "切歌前触摸未释放");
-        runOnMainSync(() -> { service.load(Score.jianpu(notes, 120, "触摸回归测试")); service.toggle(); service.confirmHalfState((Boolean) field(keyboard, "half")); });
+        runOnMainSync(() -> { service.load(Score.jianpu(notes, 120, "触摸回归测试")); service.toggle(); prepareHalfOff(); });
+    }
+    private void checkHalfPrompt() {
+        View panel = (View) field(service, "panel");
+        check((Boolean) field(service, "awaitingHalf"), "未显示半音关闭提示");
+        check(find(panel, "未选中") == null && find(panel, "已选中") == null, "仍显示半音状态选择按钮");
+        check(find(panel, "请先将游戏内「半音」设为未选中。") != null && find(panel, "开始演奏").isShown(), "关闭提示或开始入口缺失");
+    }
+    private void prepareHalfOff() {
+        // 在自建键盘模拟用户按提示关闭半音，正式应用不能读取或猜测游戏按钮状态。
+        if ((Boolean) field(keyboard, "half")) find(keyboard.getWindow().getDecorView(), "半音").performClick();
+        service.confirmHalfOff();
     }
     private void tap(PointF point) {
         long now = SystemClock.uptimeMillis();
