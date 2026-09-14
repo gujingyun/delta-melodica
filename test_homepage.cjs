@@ -26,6 +26,10 @@ fs.mkdirSync(output, {recursive:true});
       assert.equal(await page.locator('#demo-video').getAttribute('preload'), 'none');
       assert.ok(await page.locator('#video-start').isVisible());
       assert.equal(await page.locator('a[download]').count(), 2);
+      assert.equal(await page.getByRole('link', {name:'下载 Android 版', exact:true}).count(), 2);
+      for (const link of await page.getByRole('link', {name:'下载 Android 版', exact:true}).all()) {
+        assert.equal(await link.getAttribute('href'), 'android.html');
+      }
       for (const href of await page.locator('a[download]').evaluateAll(links => links.map(link => link.getAttribute('href')))) {
         assert.equal(href, 'api/download');
       }

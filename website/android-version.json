@@ -1,0 +1,15 @@
+{
+  "platform": "android",
+  "version": "0.6.0",
+  "versionCode": 6,
+  "minSdk": 26,
+  "file": "downloads/delta-melodica-android-v0.6.0.apk",
+  "size": 67932,
+  "sha256": "c08a157e1e72f276961dfdfaf66c86859a50c8e474804de75dc039989c9fbb39",
+  "certificateSha256": "fbb496e1dfe34cbaefe4e07fc6ab82480ca1b52807c5d86ac7fa49aa1231154c",
+  "notes": [
+    "支持官网 MIDI 和 JSON 曲谱",
+    "正式签名及安装包校验",
+    "离线权限与数据说明"
+  ]
+}
