@@ -1,5 +1,11 @@
 # 三角洲口风琴介绍页
 
+## 安卓 v0.6.3 官网发布
+
+2026-09-14 已更新 [安卓下载页](https://aiygzn.top/melodica/android.html) 与 `android-version.json`，发布自适应悬浮控制条、播放精简及 3 秒自动隐藏的半音文字提示。下载页说明已同步，并标注教程视频为早期版本。
+
+`api/download/android` 计数后跳转至 `downloads/delta-melodica-android-v0.6.3.apk`。新增 APK 的 Nginx 精确下载规则，保留 v0.6.0；先上传 APK 与校验文件，通过 `nginx -t` 后 reload，再重启统计服务更新下载目标，最后替换页面和清单。Linux 统计回归 7 项通过，两页四档宽度检查通过，公网实际下载、大小、SHA-256 和下载计数验证通过。备份、校验及截图见[发布记录](../docs/android-v0.6.3-release.md)。
+
 ## Windows 与 Android 下载统计
 
 Windows 下载沿用 `api/download`，安卓下载页及发布模板改用 `api/download/android`，由统计服务计数后 302 跳转至对应安装包。部署时先更新 `server/melodica_stats.py` 并重启统计服务，确认两端 HEAD 跳转正确后再发布 `android.html` 与 `admin/index.html`；现有 Nginx `/melodica/api/` 代理已覆盖新入口，无需改配置。
