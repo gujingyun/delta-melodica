@@ -1,5 +1,9 @@
 # 三角洲口风琴介绍页
 
+## Windows v0.15 发布
+
+客户端支持原谱精确拍数、谱面预览与特殊时值编辑。对应 `updates-v0.15.html`、`assets/main-window-v0.15.png` 和 `downloads/delta-melodica-v0.15.exe`。先上传校验成品与资源，再切换下载跳转、首页和 `version.json`；保留安卓页面、账号资源和线上曲库。
+
 ## 安卓 v0.6.0 官网发布
 
 安卓页 `android.html#tutorial` 提供手机版安装使用教程，首屏「观看安装使用教程」跳转至播放器。复用本站 `video-player.js` 和 hls.js，点击后加载视频，支持拖动、全屏及 MP4 兼容播放。素材为用户提供的 2026-09-14 手机实录，约 2 分钟；网页副本保留 1608×1080、60 帧及原声，开启 MP4 faststart，并拆成 30 个约 4 秒的 HLS 分片。
