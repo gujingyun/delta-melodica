@@ -123,7 +123,7 @@ class App:
         self.elevated = process_elevated()
         self.log.info("启动 三角洲口风琴 v%s；PID=%s；管理员权限=%s", APP_VERSION, os.getpid(), self.elevated)
         self.settings = DEFAULTS.copy()
-        self.load_error = None
+        self.load_error = self.account.warning or None
         try:
             saved = json.loads((self.data_dir / "settings.json").read_text(encoding="utf-8"))
             candidate = {k: saved.get(k, v) for k, v in DEFAULTS.items()}
@@ -156,7 +156,7 @@ class App:
         self.seeking, self.pending_play, self.transport_revision = False, None, 0
         self.seek_revision = 0
         self.restore_plan_after_test = False
-        self.busy, self.closing = False, False
+        self.busy, self.closing, self.exit_requested = False, False, False
         self.update_checking = False
         self.online_catalog = []
         self.resource_search = None
@@ -1322,6 +1322,8 @@ class App:
             self.play(preview)
 
     def play(self, preview=False):
+        if self.closing or self.exit_requested:
+            return
         if self.account_ui.dialog:
             self.detail.set("请先返回本地曲库，再开始演奏。")
             return
@@ -1487,8 +1489,8 @@ class App:
                         self._update_progress()
                         self.draw_keys()
                 elif kind == "exit":
-                    self.close()
-                    return
+                    if self.close():
+                        return
                 elif kind == "tray_ready":
                     self.log.info("系统托盘已就绪")
                 elif kind == "tray_error":
@@ -1687,24 +1689,35 @@ class App:
         except RuntimeError as error:
             self.detail.set(str(error))
 
-    def close(self):
+    def close(self, force=False):
         if self.closing:
-            return
-        self.closing = True
-        if self.score_editor:
-            self.score_editor.close(force=True)
-        self._close_online_library_dialog()
-        self.root.after_cancel(self.poll_timer)
-        self.player.close()
-        self.overlay.close()
-        if self.hotkeys:
-            self.hotkeys.close()
-        if self.tray:
-            self.tray.close()
-        self.log.info("关闭助手")
-        self.log.removeHandler(self.log_handler)
-        self.log_handler.close()
-        self.root.destroy()
+            return True
+        if self.exit_requested:
+            return False
+        self.exit_requested = True
+        try:
+            # 先释放演奏输入；用户取消退出后仍保持停止，界面事件继续处理。
+            self.stop("退出程序")
+            self.pending_play, self.seeking = None, False
+            self.player.close()
+            self._set_busy(False)
+            if self.score_editor and not self.score_editor.close(force=force):
+                return False
+            self.closing = True
+            self._close_online_library_dialog()
+            self.root.after_cancel(self.poll_timer)
+            self.overlay.close()
+            if self.hotkeys:
+                self.hotkeys.close()
+            if self.tray:
+                self.tray.close()
+            self.log.info("关闭助手")
+            self.log.removeHandler(self.log_handler)
+            self.log_handler.close()
+            self.root.destroy()
+            return True
+        finally:
+            self.exit_requested = False
 
 
 def main():
@@ -1787,6 +1800,7 @@ def main():
                     capture(app.online_catalog_dialog, "online-download.png")
                     app._close_online_library_dialog()
                 midi_tested, jianpu_tested, score_json_tested, source_to_edit = 0, 0, 0, None
+                from cloud_score import from_song
                 for _, source in app.entries:
                     if source[0] == "file" and source[1].suffix.lower() in (".mid", ".midi"):
                         imported = read_midi(source[1])
@@ -1794,8 +1808,10 @@ def main():
                         midi_tested += 1
                     elif source[0] == "file" and source[1].suffix.lower() == ".json":
                         data = read_score_data(source[1])
+                        imported = score_from_data(data)
+                        assert compile_plan(imported, app.mapping(), style="original").notes
+                        score_json_tested += 1
                         if isinstance(data.get("jianpu_source"), dict):
-                            from cloud_score import from_song
                             from music import parse_jianpu_space
                             parsed, _ = parse_jianpu_space(data["jianpu_source"]["text"], data["title"],
                                                          mode=data["jianpu_source"].get("mode", "source"))
@@ -1809,7 +1825,6 @@ def main():
                             from cloud_score import from_song
                             parsed = validate_score_file(source[1])
                             assert compile_plan(parsed, app.mapping(), style="original").notes
-                            score_json_tested += 1
                             source_to_edit = source[1]
                 if source_to_edit:
                     app._load_library(source_to_edit)

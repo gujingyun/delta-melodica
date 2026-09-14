@@ -25,7 +25,7 @@ class SongSettingsTests(unittest.TestCase):
 
     def tearDown(self):
         self.root.tk.call("tk", "scaling", self.scaling)
-        self.app.close()
+        self.app.close(force=True)
         self.app = self.root = None
         gc.collect()
         self.folder.cleanup()
@@ -144,10 +144,10 @@ class SongSettingsTests(unittest.TestCase):
         self.assertIs(self.app.score_editor, editor)
         self.assertEqual(editor.name.get(), "未保存的新曲")
         self.assertFalse(list(self.app.library_dir.iterdir()))
-        with patch("score_editor.messagebox.askyesno", return_value=False):
+        with patch("score_editor.messagebox.askyesnocancel", return_value=None):
             editor.close()
         self.assertFalse(editor.closed)
-        with patch("score_editor.messagebox.askyesno", return_value=True):
+        with patch("score_editor.messagebox.askyesnocancel", return_value=False):
             editor.close()
         self.assertIsNone(self.app.score_editor)
         self.assertFalse(list(self.app.library_dir.iterdir()))
@@ -237,6 +237,22 @@ class SongSettingsTests(unittest.TestCase):
         self.restart()
         self.assertTrue(self.app.plan.notes)
         self.assertIn("曲目设置读取失败", self.app.detail.get())
+
+    def test_corrupt_claims_keep_local_library_usable_and_show_recovery_notice(self):
+        path = self.add_midi("recover__仍可演奏.mid")
+        state_path = Path(self.folder.name) / "guest-claims.json"
+        state_path.write_text("{", encoding="utf-8")
+        self.restart()
+        self.assertIn("游客继承记录", self.app.detail.get())
+        self.app._load_library(path)
+        self.assertTrue(self.app.plan.notes)
+        self.app.account_ui.show()
+        self.root.update()
+        self.assertIn("游客继承记录", self.app.account_ui.message.get())
+        back = self.app.account_ui.buttons[-1]
+        self.assertTrue(back.winfo_ismapped())
+        self.assertGreaterEqual(back.winfo_height(), back.winfo_reqheight())
+        self.assertEqual(state_path.read_text(encoding="utf-8"), "{")
 
     def test_delete_imported_song_removes_file_and_its_saved_preferences(self):
         path = self.add_midi("33333333__待删除.mid")

@@ -61,6 +61,49 @@ class DesktopAccountTests(unittest.TestCase):
         self.assertNotIn(secret, encrypted)
         self.assertEqual(protect_bytes(encrypted, decrypt=True), secret)
 
+    def test_corrupt_claims_allow_startup_and_login_but_cannot_reassign_guests(self):
+        path = self.client.root / "guest-claims.json"
+        cases = ["{", "[]", json.dumps({"owners": []}),
+                 json.dumps({"owners": {}, "pending": {}}),
+                 json.dumps({"owners": {"../outside.json": "a" * 32}})]
+        for content in cases:
+            with self.subTest(content=content):
+                path.write_text(content, encoding="utf-8")
+                client = self.make_client("desktop")
+                self.assertIn("游客继承记录", client.warning)
+                self.assertEqual(client.guest_files(), [])
+                client.session = {"user": {"id": "a" * 32, "email": "test@example.com"}, "token": "test"}
+                with patch.object(client, "request") as request, self.assertRaisesRegex(AccountError, "游客继承记录"):
+                    client.claim_guest()
+                request.assert_not_called()
+                client.restore_claims()
+                self.assertEqual(path.read_text(encoding="utf-8"), content)
+        self.register()
+        restarted = self.make_client("desktop")
+        self.assertIsNotNone(restarted.user)
+        self.assertIn("游客继承记录", restarted.warning)
+        self.assertEqual(restarted.sync()["uploaded"], 0)
+        self.assertEqual(path.read_text(encoding="utf-8"), cases[-1])
+
+    def test_restored_claim_record_resumes_original_pending_batch(self):
+        self.register()
+        with patch.object(self.client, "request", side_effect=AccountError("测试断网")), self.assertRaises(AccountError):
+            self.client.claim_guest()
+        path = self.client.root / "guest-claims.json"
+        backup = path.read_bytes()
+        token = self.client.state["pending"]["guest_token"]
+        path.write_text("{", encoding="utf-8")
+        restarted = self.make_client("desktop")
+        with self.assertRaisesRegex(AccountError, "游客继承记录"):
+            restarted.claim_guest()
+        self.assertEqual(path.read_text(encoding="utf-8"), "{")
+        path.write_bytes(backup)
+        repaired = self.make_client("desktop")
+        self.assertEqual(repaired.state["pending"]["guest_token"], token)
+        self.assertEqual(repaired.claim_guest(), 1)
+        self.assertTrue((repaired.library_dir / "legacy__游客曲谱.json").is_file())
+        self.assertEqual(repaired.warning, "")
+
     def test_guest_sync_prompts_login_without_changing_files(self):
         with self.assertRaisesRegex(AccountError, "需要登录"):
             self.client.sync()
@@ -111,6 +154,10 @@ class DesktopAccountTests(unittest.TestCase):
         self.register()
         with patch("account_client.shutil.copy2", side_effect=OSError("测试磁盘失败")), self.assertRaises(OSError):
             self.client.claim_guest()
+        with patch("account_client.shutil.copy2", side_effect=OSError("测试磁盘仍不可写")):
+            unavailable = self.make_client("desktop")
+        self.assertIn("副本恢复未完成", unavailable.warning)
+        self.assertIsNotNone(unavailable.state["pending"])
         restarted = self.make_client("desktop")
         restarted.claim_guest()
         target = restarted.library_dir / "legacy__游客曲谱.json"

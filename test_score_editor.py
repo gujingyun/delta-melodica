@@ -27,7 +27,7 @@ class ScoreEditorTests(unittest.TestCase):
     def tearDown(self):
         if not self.app.closing:
             self.root.tk.call("tk", "scaling", self.scaling)
-        self.app.close()
+        self.app.close(force=True)
         self.app = self.root = None
         gc.collect()
         self.folder.cleanup()
@@ -142,10 +142,10 @@ class ScoreEditorTests(unittest.TestCase):
     def test_close_cancel_keeps_edits_and_confirm_discards_copy(self):
         editor = self.editor()
         self.replace(editor, "1 2 3")
-        with patch("score_editor.messagebox.askyesno", return_value=False):
+        with patch("score_editor.messagebox.askyesnocancel", return_value=None):
             editor.close()
         self.assertFalse(editor.closed)
-        with patch("score_editor.messagebox.askyesno", return_value=True):
+        with patch("score_editor.messagebox.askyesnocancel", return_value=False):
             editor.close()
         self.assertTrue(editor.closed)
         self.assertFalse(list(self.app.library_dir.iterdir()))
@@ -173,7 +173,8 @@ class ScoreEditorTests(unittest.TestCase):
         self.replace(editor, "1:16")
         for action in (lambda: self.replace(editor, "2:16"), self.app.close):
             output = FakeOutput()
-            with patch("score_editor.PreviewOutput", return_value=output):
+            with patch("score_editor.PreviewOutput", return_value=output), \
+                    patch("score_editor.messagebox.askyesnocancel", return_value=False):
                 editor.preview()
                 self.assertTrue(output.started.wait(1))
                 action()

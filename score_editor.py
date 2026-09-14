@@ -469,14 +469,22 @@ class ScoreEditor:
 
     def close(self, force=False):
         if self.closed:
-            return
-        if not force and self.snapshot() != self.initial and not messagebox.askyesno(
-                "放弃本次修改？", "修改尚未保存，确定关闭编辑器吗？", parent=self.dialog):
-            return
+            return True
+        # 确认框等待期间不继续发声，取消关闭后保留草稿和可用的试听入口。
+        self.player.close()
+        if not force and self.snapshot() != self.initial:
+            answer = messagebox.askyesnocancel("保存本次修改？",
+                "修改尚未保存，是否另存到曲库？\n\n选择“是”保存后关闭；选择“否”放弃修改；选择“取消”继续编辑。",
+                parent=self.dialog)
+            if answer is None:
+                return False
+            if answer:
+                self.save()
+                return self.closed
         self.closed = True
         if self.validation_timer:
             self.dialog.after_cancel(self.validation_timer)
         self.dialog.after_cancel(self.poll_timer)
-        self.player.close()
         self.dialog.destroy()
         self.app.score_editor = None
+        return True

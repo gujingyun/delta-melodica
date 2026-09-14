@@ -1,9 +1,11 @@
 """验证托盘入口、窗口隐藏与彻底退出时的资源清理。"""
 import gc
+import json
 import tempfile
 import time
 import tkinter as tk
 import unittest
+from unittest.mock import patch
 
 from app import App
 from music import Mapping, compile_plan, parse_jianpu
@@ -19,6 +21,8 @@ class LifecycleTests(unittest.TestCase):
         self.root.update()
 
     def tearDown(self):
+        if self.app.score_editor:
+            self.app.score_editor.close(force=True)
         self.app.close()
         self.folder.cleanup()
         # Tk 对象必须由主线程回收，避免下一项托盘测试在线程中触发循环回收。
@@ -72,6 +76,72 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.root.state(), "normal")
         self.assertIn("模拟托盘故障", self.app.detail.get())
         self.assertFalse(self.app.closing)
+
+    def test_cancel_tray_exit_preserves_draft_releases_preview_and_keeps_polling(self):
+        self.app.edit_song()
+        editor = self.app.score_editor
+        editor.name.set("未保存的草稿")
+        output = FakeOutput()
+        editor.player.start(compile_plan(parse_jianpu("1:8", 60), Mapping()), lambda: output)
+        self.assertTrue(output.started.wait(1))
+        def cancel(*args, **kwargs):
+            self.assertTrue(output.closed)
+            self.assertFalse(output.held)
+            self.assertFalse(self.app.close(), "重复退出不能绕过当前确认框")
+            with patch("app.PreviewOutput") as preview:
+                self.app.play(preview=True)
+                preview.assert_not_called()
+            return None
+        with patch("score_editor.messagebox.askyesnocancel", side_effect=cancel) as question:
+            self.app.events.put(("exit", None))
+            self.pump(lambda: question.called)
+        self.assertFalse(self.app.closing)
+        self.assertIs(self.app.score_editor, editor)
+        self.assertEqual(editor.name.get(), "未保存的草稿")
+        question.assert_called_once()
+        self.app.events.put(("warning", "取消退出后仍在处理事件"))
+        self.pump(lambda: self.app.detail.get() == "取消退出后仍在处理事件")
+        self.assertFalse(self.app.player.active)
+
+    def test_tray_exit_can_save_draft_before_closing(self):
+        self.app.edit_song()
+        editor = self.app.score_editor
+        editor.name.set("退出前保存")
+        with patch("score_editor.messagebox.askyesnocancel", return_value=True):
+            self.app.events.put(("exit", None))
+            self.pump(lambda: self.app.closing)
+        self.assertTrue(self.app.closing)
+        self.assertIsNotNone(editor.saved_path)
+        data = json.loads(editor.saved_path.read_text(encoding="utf-8"))
+        self.assertEqual(data["title"], "退出前保存")
+        self.assertTrue(data["notes"])
+
+    def test_exit_save_failure_keeps_window_and_draft(self):
+        self.app.edit_song()
+        editor = self.app.score_editor
+        editor.name.set("不能丢失的草稿")
+        with patch("score_editor.messagebox.askyesnocancel", return_value=True), \
+                patch("score_editor.atomic_json", side_effect=OSError("测试磁盘写入失败")), \
+                patch("score_editor.messagebox.showerror") as error:
+            self.app.close()
+        self.assertFalse(self.app.closing)
+        self.assertIs(self.app.score_editor, editor)
+        self.assertEqual(editor.name.get(), "不能丢失的草稿")
+        error.assert_called_once()
+
+    def test_fallback_exit_button_uses_same_unsaved_confirmation(self):
+        self.app.events.put(("tray_error", "模拟托盘故障"))
+        self.pump(lambda: self.app.exit_button.winfo_ismapped())
+        self.app.edit_song()
+        self.app.score_editor.name.set("待放弃的草稿")
+        with patch("score_editor.messagebox.askyesnocancel", return_value=None):
+            self.app.exit_button.invoke()
+        self.assertFalse(self.app.closing)
+        with patch("score_editor.messagebox.askyesnocancel", return_value=False) as question:
+            self.app.exit_button.invoke()
+        question.assert_called_once()
+        self.assertTrue(self.app.closing)
+        self.assertFalse(list(self.app.library_dir.glob("*.json")))
 
     def test_modal_form_is_not_stranded_by_main_close(self):
         dialog = self.app._dialog("测试设置", "300x150")

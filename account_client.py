@@ -35,6 +35,29 @@ def read_json(path, default):
         return default
 
 
+def validate_claims(state):
+    """先校验完整归属记录，再允许据此恢复或分配曲目。"""
+    def filename(value):
+        return (isinstance(value, str) and value not in ("", ".", "..")
+                and Path(value).name == value and ":" not in value)
+
+    def user_id(value):
+        return isinstance(value, str) and re.fullmatch(r"[a-f0-9]{32}", value)
+
+    if not isinstance(state, dict) or not isinstance(state.get("owners"), dict):
+        raise ValueError("归属表格式不正确")
+    if any(not filename(name) or not user_id(owner) for name, owner in state["owners"].items()):
+        raise ValueError("归属表包含无效的文件名或账号编号")
+    pending = state.get("pending")
+    if pending is not None and (not isinstance(pending, dict) or not user_id(pending.get("user_id"))
+            or not isinstance(pending.get("guest_token"), str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", pending["guest_token"])
+            or not isinstance(pending.get("files"), list)
+            or any(not filename(name) for name in pending["files"])):
+        raise ValueError("未完成的继承批次格式不正确")
+    return state
+
+
 def protect_bytes(data, decrypt=False):
     """使用当前 Windows 用户的 DPAPI，磁盘不保存明文登录令牌。"""
     class Blob(ctypes.Structure):
@@ -89,10 +112,19 @@ class AccountClient:
             pass
         except (ValueError, KeyError, TypeError, OSError):
             self.warning = "登录凭据无法恢复，请重新登录；曲谱仍保留在本机"
-        self.state = read_json(self.root / "guest-claims.json", {"owners": {}, "pending": None})
-        if not isinstance(self.state, dict) or not isinstance(self.state.get("owners"), dict):
-            raise ValueError("游客继承记录损坏，请恢复 guest-claims.json 备份")
-        self.restore_claims()
+        self.state = {"owners": {}, "pending": None}
+        self.claims_error = ""
+        try:
+            self.state = validate_claims(read_json(self.root / "guest-claims.json", self.state))
+        except (ValueError, OSError):
+            # 不覆盖损坏记录，也不把未知归属当成尚未归属。
+            self.claims_error = ("游客继承记录无法读取，已暂停合并；原文件保留，本地曲库仍可使用。"
+                                 "请恢复数据目录中的 guest-claims.json 备份后重新启动。")
+            self.warning = "；".join(filter(None, (self.warning, self.claims_error)))
+        try:
+            self.restore_claims()
+        except OSError:
+            self.warning = "；".join(filter(None, (self.warning, "游客曲库副本恢复未完成，可在账号面板重试合并；原文件保留")))
 
     @property
     def user(self):
@@ -110,6 +142,8 @@ class AccountClient:
 
     def guest_files(self):
         """只返回尚可归属账号的游客文件；归属记录不影响游客本地显示。"""
+        if self.claims_error:
+            return []
         folder = self.root / "songs"
         return [p for p in sorted(folder.iterdir()) if p.is_file() and not p.is_symlink()
                 and p.suffix.lower() in (".mid", ".midi", ".json") and p.name not in self.state["owners"]] if folder.exists() else []
@@ -169,6 +203,8 @@ class AccountClient:
         return warning or "已退出，当前为游客模式"
 
     def restore_claims(self):
+        if self.claims_error:
+            return
         pending = self.state.get("pending")
         if not self.user or not pending or pending["user_id"] != self.user["id"]:
             return
@@ -181,6 +217,8 @@ class AccountClient:
 
     def claim_guest(self):
         """先记录批次再申请归属，成功后复制本地文件，原文件保留供游客继续使用。"""
+        if self.claims_error:
+            raise AccountError(self.claims_error)
         if not self.user:
             raise AccountError("请先登录后合并游客曲库", 401)
         pending = self.state.get("pending")

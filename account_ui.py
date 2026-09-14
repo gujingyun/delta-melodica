@@ -111,7 +111,9 @@ class AccountPanel:
             "register": "注册后，本机游客曲谱会自动归入此账号并同步至私有云端。原曲保留在本机，退出登录后仍可使用。",
             "reset": "使用注册邮箱接收验证码并设置新密码。\n重置成功后，所有设备需使用新密码重新登录。",
         }[mode])
-        self.dialog.geometry("540x500" if mode == "login" else "540x650")
+        # 恢复提示需要额外空间，避免“返回本地曲库”按钮被挤出窗口。
+        height = (500 if mode == "login" else 650) + (80 if self.client.warning else 0)
+        self.dialog.geometry(f"540x{height}")
 
     def run(self, action, complete=None):
         if self.running:
@@ -213,6 +215,9 @@ class AccountPanel:
         self.run(self.client.sync, lambda result, error: self.message.set(error or self.sync_message(result)))
 
     def merge(self):
+        if self.client.claims_error:
+            self.message.set(self.client.claims_error)
+            return
         count = len(self.client.guest_files())
         if not count and not self.client.state.get("pending"):
             self.message.set("本机没有尚未归属账号的游客曲谱")
