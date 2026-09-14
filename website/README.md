@@ -1,5 +1,15 @@
 # 三角洲口风琴介绍页
 
+## 安卓 v0.6.0 官网发布
+
+首页首屏和底部下载区均提供「下载 Android 版」，进入 `android.html` 后下载正式签名 APK。安卓使用 `android-version.json` 独立版本清单，`android-data.html` 展示与 App 一致的权限和数据说明。
+
+发行包为 `downloads/delta-melodica-android-v0.6.0.apk`，67,932 字节，SHA-256：`c08a157e1e72f276961dfdfaf66c86859a50c8e474804de75dc039989c9fbb39`。文件不提交 Git；只发布公开静态页面、截图、版本清单与 Nginx 下载配置。旧调试预览包应先保留曲谱再切换正式签名版本，网页含完整迁移说明。
+
+部署时先备份首页和配置，再上传 APK／校验文件、安卓页面和资源，把 `nginx-android-download.conf` 放进已有 HTTPS server 的 include 目录并通过 `nginx -t`，平滑 reload 后最后切换首页。Windows 版本清单、下载统计跳转、曲库与账号数据保持原值。发布后通过 HTTPS 完整下载核对文件与 MIME，并复查两个首页入口。
+
+本地首页回归：`test_homepage.cjs` 验证 320／390／768／1440 px、两个安卓入口、既有 Windows 下载、视频和导航；先设置 `PLAYWRIGHT_MODULE` 指向本机 Playwright，再设置 `HOMEPAGE_TEST_URL` 为本机预览地址。
+
 ## v0.14 正式发布
 
 本次同步发布客户端、主页改版及 `updates-v0.14.html` 更新说明；主页使用 `assets/main-window-v0.14.png` 正式版本截图，去除待发布标记。以下保留本地预览与历史联调方式，正式验证结果见仓库「验证记录.md」。

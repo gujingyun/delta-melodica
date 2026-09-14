@@ -49,7 +49,8 @@ h2 { margin-bottom: 22px; font-size: clamp(30px, 3.25vw, 44px); }
 .hero-badge { display: inline-flex; align-items: center; padding: 6px 8px 6px 14px; border: 1px solid var(--line); border-radius: 30px; color: var(--muted); letter-spacing: .06em; font-size: 11px; margin-bottom: 27px; }
 .badge-version { margin-left: 15px; padding: 0 9px; border-radius: 20px; color: var(--green); background: #293721; font-family: Consolas, monospace; }
 .hero-lede { margin-bottom: 28px; color: var(--muted); font-size: 16px; line-height: 1.9; }
-.hero-actions { display: flex; justify-content: center; align-items: center; gap: 12px; }
+.hero-actions { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 12px; }
+.download-actions { display: flex; flex-wrap: wrap; gap: 12px; }
 .button { display: inline-flex; align-items: center; justify-content: center; gap: 12px; min-height: 50px; padding: 0 24px; border: 1px solid transparent; border-radius: 8px; font-size: 14px; font-weight: 600; transition: background .2s, border-color .2s, transform .2s; }
 .button-primary { color: #182210; background: var(--green); }
 .button-primary:hover { background: #d4ffa0; transform: translateY(-2px); }
