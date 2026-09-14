@@ -1,5 +1,4 @@
 """统一乐曲编辑窗口；试听使用独立播放器，保存为兼容云同步的曲谱副本。"""
-import json
 import queue
 import re
 import tkinter as tk
@@ -14,6 +13,7 @@ from music import (DEMO_SCORES, compile_plan, parse_jianpu, parse_jianpu_space, 
                    song_to_jianpu, transpose_jianpu)
 from jianpu_editor import ScorePreview, replace_header, score_glyphs, score_metadata, transpose_source
 from player import Player
+from score_file import read_score_data
 from win_input import PreviewOutput
 
 
@@ -171,7 +171,7 @@ class ScoreEditor:
             bpm, score = DEMO_SCORES[source[1]]
             return score, bpm
         if source[1].suffix.lower() == ".json":
-            data = json.loads(source[1].read_text(encoding="utf-8"))
+            data = read_score_data(source[1])
             if data.get("version") != 1:
                 return data["score"], data["bpm"]
             saved = data.get("editor")

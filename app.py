@@ -31,6 +31,7 @@ from win_input import (Hotkeys, PreviewOutput, WindowsOutput, foreground, target
 from account_client import AccountClient
 from account_ui import AccountPanel
 from cloud_score import to_song
+from score_file import read_score_data, score_from_data, validate_score_file
 
 BG = "#101413"
 CARD = "#191f1c"
@@ -697,7 +698,7 @@ class App:
                 label = "MIDI"
             else:
                 try:
-                    data = json.loads(source[1].read_text(encoding="utf-8"))
+                    data = read_score_data(source[1])
                     label = "简谱" if data.get("version") != 1 or isinstance(data.get("editor"), dict) else "云端"
                 except (ValueError, OSError, AttributeError):
                     label = "曲谱"
@@ -722,9 +723,9 @@ class App:
                 song = parse_jianpu(score, bpm, name)
                 hint = f"示例曲 · {bpm} BPM"
             elif source[1].suffix.lower() == ".json":
-                data = json.loads(source[1].read_text(encoding="utf-8"))
+                data = read_score_data(source[1])
+                song = score_from_data(data)
                 if data.get("version") == 1:
-                    song = to_song(data)
                     if isinstance(data.get("editor"), dict):
                         editor_style = data["editor"].get("style")
                         hint = "可编辑简谱 · 精确时值 · 本地修改版"
@@ -735,7 +736,6 @@ class App:
                         mode = "按谱面规则" if data["jianpu_source"].get("mode") == "score" else "跟随源站播放"
                         hint = f"在线简谱 · {mode} · 可编辑 / 离线演奏" + (" · " + " ".join(warnings) if warnings else " · 已读取谱中速度与调号")
                 else:
-                    song = parse_jianpu(data["score"], float(data["bpm"]), data["title"])
                     hint = f"自定义简谱 · {data['bpm']} BPM"
             else:
                 song = read_midi(source[1])
@@ -1159,7 +1159,6 @@ class App:
             try:
                 path = Path(filename)
                 if path.suffix.lower() == ".json":
-                    from online_library import validate_score_file
                     validate_score_file(path)
                 else:
                     read_midi(path)
@@ -1252,7 +1251,10 @@ class App:
         if not hasattr(self, "delete_button"):
             return
         self.edit_button.configure(state="normal" if self.song and not self.busy else "disabled")
-        can_delete = bool(self.current_source and self.current_source[0] == "file" and not self.busy)
+        # 删除针对列表中的文件；解析失败不应让损坏曲目无法清理。
+        selection = self.library.curselection()
+        source = self.entries[selection[0]][1] if selection and selection[0] < len(self.entries) else None
+        can_delete = bool(source and source[0] == "file" and not self.busy)
         self.delete_button.configure(state="normal" if can_delete else "disabled")
 
     def delete_song(self):
@@ -1791,7 +1793,7 @@ def main():
                         assert compile_plan(imported, app.mapping(), track="auto", style="piano").notes
                         midi_tested += 1
                     elif source[0] == "file" and source[1].suffix.lower() == ".json":
-                        data = json.loads(source[1].read_text(encoding="utf-8"))
+                        data = read_score_data(source[1])
                         if isinstance(data.get("jianpu_source"), dict):
                             from cloud_score import from_song
                             from music import parse_jianpu_space
@@ -1805,7 +1807,6 @@ def main():
                             source_to_edit = source[1]
                         elif data.get("editor", {}).get("format") == "jianpu_space":
                             from cloud_score import from_song
-                            from online_library import validate_score_file
                             parsed = validate_score_file(source[1])
                             assert compile_plan(parsed, app.mapping(), style="original").notes
                             score_json_tested += 1

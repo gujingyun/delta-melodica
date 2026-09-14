@@ -14,6 +14,7 @@ import urllib.parse
 import urllib.request
 
 from cloud_score import MAX_SCORE_BYTES, from_song, normalize_score, score_id
+from score_file import read_score_data, score_from_data
 
 
 API_URL = "https://aiygzn.top/melodica/account-api"
@@ -240,15 +241,12 @@ class AccountClient:
 
 
 def read_local_score(path):
-    from music import parse_jianpu, read_midi
+    from music import read_midi
     path = Path(path)
     if path.stat().st_size > 10 * 1024 * 1024:
         raise ValueError("曲谱文件超过 10 MB")
     if path.suffix.lower() == ".json":
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if data.get("version") == 1:
-            return normalize_score(data)
-        return from_song(parse_jianpu(data["score"], float(data["bpm"]), data["title"]))
+        return normalize_score(from_song(score_from_data(read_score_data(path))))
     song = read_midi(path)
     song.title = path.stem.split("__", 1)[-1]
     return from_song(song)

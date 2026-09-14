@@ -12,7 +12,8 @@ import urllib.request
 import uuid
 
 from music import read_midi
-from cloud_score import MAX_SCORE_BYTES, to_song
+from cloud_score import MAX_SCORE_BYTES
+from score_file import validate_score_file
 
 
 ONLINE_CATALOG_URL = "https://aiygzn.top/melodica/songs.json"
@@ -157,27 +158,3 @@ def download_online_song(song: OnlineSong, library_dir: str | Path) -> Path:
         if temporary_path:
             temporary_path.unlink(missing_ok=True)
         raise
-
-
-def validate_score_file(path):
-    """核对交换音符与可编辑原谱一致，拒绝损坏的编辑附注。"""
-    from cloud_score import from_song
-    from music import parse_jianpu, parse_jianpu_space
-    if Path(path).stat().st_size > MAX_SCORE_BYTES:
-        raise ValueError("曲谱 JSON 不能超过 2 MB")
-    data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
-    song = to_song(data)
-    editor = data.get("editor")
-    if editor is not None:
-        if not isinstance(editor, dict) or editor.get("style", "original") not in ("original", "piano"):
-            raise ValueError("曲谱编辑信息格式不正确")
-        try:
-            if editor.get("format") == "jianpu_space":
-                parsed = parse_jianpu_space(editor["score"], song.title, mode=editor.get("mode", "score"))[0]
-            else:
-                parsed = parse_jianpu(editor["score"], float(editor["bpm"]), song.title, precise=True)
-            if from_song(parsed) != from_song(song):
-                raise ValueError("曲谱的原谱文字与音符不一致")
-        except (KeyError, TypeError, AttributeError) as error:
-            raise ValueError("曲谱编辑信息缺少有效的谱文或速度") from error
-    return song
