@@ -21,7 +21,6 @@ import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
-import android.view.ViewTreeObserver;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
@@ -43,9 +42,8 @@ public final class MelodicaService extends AccessibilityService {
     private WindowManager.LayoutParams panelParams;
     private TextView title, status;
     private Button play, collapse, calibrate;
-    private LinearLayout halfConfirmation, panelHeader, controls;
+    private LinearLayout panelHeader, controls;
     private boolean awaitingHalf, compactPanel, panelTouching;
-    private long halfConfirmationSerial;
     private final ToneState tones = new ToneState();
     private Calibration calibration;
     private Score score;
@@ -59,6 +57,7 @@ public final class MelodicaService extends AccessibilityService {
     private long cancelledAt;
     private int heldIndex = -1;
     private final Runnable pumpTask = this::pump;
+    private final Runnable halfPromptTask = this::finishHalfPrompt;
     private final Runnable watchdog = () -> fail("触摸回调超时，已关闭服务，请重新开启");
     private final Runnable heartbeat = new Runnable() {
         @Override public void run() {
@@ -117,12 +116,6 @@ public final class MelodicaService extends AccessibilityService {
         button(controls, "停止", this::stop);
         calibrate = button(controls, "校准", this::startCalibration);
         collapse = button(controls, "收起", () -> { if (canCollapse()) { stop(); hidePanel(); } });
-        halfConfirmation = new LinearLayout(this); halfConfirmation.setOrientation(LinearLayout.VERTICAL);
-        TextView question = new TextView(this); question.setText("请先将游戏内「半音」设为未选中。"); question.setTextColor(Color.WHITE); question.setTextSize(13); halfConfirmation.addView(question);
-        LinearLayout choices = new LinearLayout(this); halfConfirmation.addView(choices);
-        button(choices, "开始演奏", this::confirmHalfOff);
-        button(choices, "取消", () -> { dismissHalfConfirmation(); message = "已取消播放"; render(); });
-        panel.addView(halfConfirmation); halfConfirmation.setVisibility(View.GONE);
         panelParams = new WindowManager.LayoutParams(panelWidth(false), WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT);
         panelParams.gravity = Gravity.TOP | Gravity.LEFT; panelParams.x = dp(12); panelParams.y = dp(24);
@@ -168,6 +161,7 @@ public final class MelodicaService extends AccessibilityService {
         // 以可用屏幕短边确定占比；文字与点击面积只作为下限，窗口本身不固定长宽。
         int preferred = Math.round(Math.min(space.x, space.y) * (compact ? .5f : .62f));
         int textWidth = (int) Math.ceil(Math.max(title.getPaint().measureText("准备 3 秒 · 拖动"), status.getPaint().measureText("00:00 / 30:00"))) + dp(4);
+        textWidth = Math.max(textWidth, (int) Math.ceil(status.getPaint().measureText("半音设为未选中")) + dp(4));
         int required = compact ? textWidth + 2 * panelButtonWidth() : 4 * panelButtonWidth();
         return Math.min(Math.max(preferred, required + panel.getPaddingLeft() + panel.getPaddingRight()), Math.max(1, space.x - dp(8)));
     }
@@ -189,9 +183,10 @@ public final class MelodicaService extends AccessibilityService {
         if (panelParams.width != width) { panelParams.width = width; windows.updateViewLayout(panel, panelParams); }
     }
     public void hidePanel() {
-        dismissHalfConfirmation();
+        if (awaitingHalf) pause("已取消播放准备");
+        dismissHalfPrompt();
         closeCalibration();
-        if (panel != null) { windows.removeView(panel); panel = null; title = null; status = null; play = null; collapse = null; calibrate = null; halfConfirmation = null; panelHeader = null; controls = null; }
+        if (panel != null) { windows.removeView(panel); panel = null; title = null; status = null; play = null; collapse = null; calibrate = null; panelHeader = null; controls = null; }
         panelTouching = false;
     }
     private boolean canCollapse() {
@@ -203,7 +198,7 @@ public final class MelodicaService extends AccessibilityService {
         boolean enabled = canCollapse();
         if (collapse.isEnabled() != enabled) { collapse.setEnabled(enabled); collapse.setAlpha(enabled ? 1f : .35f); }
         // 手动触碰会先取消演奏手势，抬手和释放完成前保持按钮位置，防止点错或漏掉停止。
-        boolean compact = !awaitingHalf && (!enabled || (compactPanel && panelTouching));
+        boolean compact = !enabled || (compactPanel && panelTouching);
         layoutPanel(compact);
         String detail = message;
         String heading = compact ? "演奏中 · 拖动" : "口风琴 · 拖动移动";
@@ -214,7 +209,7 @@ public final class MelodicaService extends AccessibilityService {
             String progress = time(transport.position(now)) + " / " + time(score.duration);
             if (compact) {
                 heading = transport.state == Transport.State.COUNTDOWN ? detail + " · 拖动" : transport.active() ? "演奏中 · 拖动" : "已暂停 · 拖动";
-                detail = progress;
+                detail = awaitingHalf ? "半音设为未选中" : progress;
             } else detail = score.title + "  " + progress + "\n" + detail;
             String label = transport.active() ? "暂停" : transport.state == Transport.State.PAUSED ? "继续" : "播放";
             if (!label.contentEquals(play.getText())) play.setText(label);
@@ -227,13 +222,14 @@ public final class MelodicaService extends AccessibilityService {
     public void toggle() {
         if (transport == null || calibration != null) return;
         if (transport.active()) { pause("已暂停"); return; }
-        if (awaitingHalf) return;
         // 手指点悬浮按钮时系统会先取消演奏手势，避免该次抬手又触发继续。
         if (transport.state == Transport.State.PAUSED && SystemClock.uptimeMillis() - cancelledAt < 400) return;
         if (inFlight || held != null) { notifyUser("正在释放触摸，请稍后重试"); return; }
         if (!validateStart()) return;
         showPanel(); awaitingHalf = true; tones.invalidate();
-        halfConfirmation.setVisibility(View.VISIBLE); message = "准备好后点击「开始演奏」"; render();
+        // 播放和续播都给用户三秒关闭半音，提示期间不预选变音或发送音键。
+        transport.play(SystemClock.uptimeMillis(), 3000);
+        handler.postDelayed(halfPromptTask, 3000); render();
     }
     private boolean validateStart() {
         if (!ready()) { notifyUser("请进入目标窗口并完成 12 点校准；升级或旋转屏幕后需重新校准"); return false; }
@@ -248,28 +244,15 @@ public final class MelodicaService extends AccessibilityService {
         } catch (IllegalArgumentException e) { notifyUser(e.getMessage()); return false; }
         return true;
     }
-    private void dismissHalfConfirmation() {
-        awaitingHalf = false; halfConfirmationSerial++;
-        if (halfConfirmation != null) halfConfirmation.setVisibility(View.GONE);
+    private void dismissHalfPrompt() {
+        awaitingHalf = false; handler.removeCallbacks(halfPromptTask);
     }
-    void confirmHalfOff() {
-        if (!awaitingHalf) return;
-        halfConfirmation.setVisibility(View.GONE);
-        View confirmedPanel = panel;
-        long confirmation = halfConfirmationSerial;
-        // 等确认区真正缩回后再检查遮挡；小屏／大字体时旧高度可能覆盖音键。
-        confirmedPanel.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
-            @Override public boolean onPreDraw() {
-                confirmedPanel.getViewTreeObserver().removeOnPreDrawListener(this);
-                if (!awaitingHalf || confirmation != halfConfirmationSerial || panel != confirmedPanel || destroyed) return true;
-                dismissHalfConfirmation();
-                if (transport == null || transport.active() || inFlight || held != null || !validateStart()) return true;
-                tones.confirmHalf(false);
-                transport.play(SystemClock.uptimeMillis(), transport.state == Transport.State.PAUSED ? 0 : 3000);
-                message = "正在演奏"; render(); schedule(0); return true;
-            }
-        });
-        confirmedPanel.requestLayout();
+    private void finishHalfPrompt() {
+        if (!awaitingHalf || destroyed) return;
+        dismissHalfPrompt();
+        if (transport == null || !transport.active()) return;
+        if (!validateStart()) { pause(message); return; }
+        tones.confirmHalf(false); message = "正在演奏"; render(); schedule(0);
     }
     private boolean covers(PointF p) {
         if (panel == null || panel.getVisibility() != View.VISIBLE) return false;
@@ -277,20 +260,20 @@ public final class MelodicaService extends AccessibilityService {
         return p.x >= location[0] && p.x < location[0] + panel.getWidth() && p.y >= location[1] && p.y < location[1] + panel.getHeight();
     }
     public void pause(String reason) {
-        dismissHalfConfirmation(); tones.invalidate();
+        dismissHalfPrompt(); tones.invalidate();
         if (transport != null) transport.pause(SystemClock.uptimeMillis());
         message = reason; handler.removeCallbacks(pumpTask);
         if (!inFlight) release(); render();
     }
     public void stop() {
-        dismissHalfConfirmation(); tones.invalidate();
+        dismissHalfPrompt(); tones.invalidate();
         if (transport != null) transport.stop();
         message = "已停止，回到曲首"; handler.removeCallbacks(pumpTask);
         if (!inFlight) release(); render();
     }
     private void schedule(long delay) { handler.removeCallbacks(pumpTask); if (!destroyed) handler.postDelayed(pumpTask, delay); }
     private void pump() {
-        if (destroyed || inFlight || transport == null) return;
+        if (destroyed || inFlight || transport == null || awaitingHalf) return;
         if (!transport.active()) { release(); return; }
         if (!ready()) { pause("已切出目标窗口，保留进度"); return; }
         long now = SystemClock.uptimeMillis(); transport.update(now);
@@ -401,7 +384,7 @@ public final class MelodicaService extends AccessibilityService {
     private void fail(String reason) {
         if (destroyed) return;
         handler.removeCallbacks(watchdog); gestureSerial++; inFlight = false; held = null;
-        dismissHalfConfirmation(); tones.invalidate();
+        dismissHalfPrompt(); tones.invalidate();
         if (transport != null) transport.stop();
         handler.removeCallbacks(pumpTask); notifyUser(reason);
         // 接口状态不明时断开服务，让系统清理该服务的触摸序列。

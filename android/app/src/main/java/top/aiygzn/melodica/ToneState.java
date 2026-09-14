@@ -7,7 +7,7 @@ public final class ToneState {
     public void confirmHalf(boolean selected) { tone = -1; half = selected ? 1 : 0; }
     public boolean known() { return half >= 0; }
     public int next(Score.Fingering fingering) {
-        if (!known()) throw new IllegalStateException("请先将游戏内半音设为未选中并确认开始");
+        if (!known()) throw new IllegalStateException("请先将游戏内半音设为未选中，等待准备完成");
         if (tone != fingering.tonePoint()) return fingering.tonePoint();
         return half != fingering.half ? Score.HALF : -1;
     }
