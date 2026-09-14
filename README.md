@@ -120,7 +120,7 @@ Windows 客户端改用炭黑与浅绿配色，统一品牌标识、按钮层级
 
 Windows 本地 MIDI／简谱自动演奏工具，按三角洲行动口风琴的八个音键设计。
 
-安卓端位于 [`android/`](android/README.md)，v0.6.0 正在准备官网 APK 发布，新增正式签名构建、MIDI／JSON 公开曲库兼容和权限与数据说明；支持账号云同步、12 点校准和悬浮演奏。真实手游兼容性仍需手机验证，尚未公开上线。旧调试预览包切换到正式签名前必须先保留曲谱，详见安卓文档。
+安卓 v0.6.0 已于 2026-09-14 正式上线，[官网首页](https://aiygzn.top/melodica/)首屏与底部均有「下载 Android 版」入口，也可进入[安卓下载页](https://aiygzn.top/melodica/android.html)。用户确认真机试奏正常后发布，公开 APK 下载和签名校验通过；支持 MIDI／JSON 公开曲库、账号云同步、12 点校准和悬浮演奏。旧调试预览包切换到正式签名前必须先保留曲谱。工程与构建说明见 [`android/`](android/README.md)，[发布结果](docs/android-v0.6.0-release.md)。
 
 ## 开始使用
 
