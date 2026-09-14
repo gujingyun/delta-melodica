@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="三角洲口风琴安卓客户端：导入与下载曲谱、12 点校准、悬浮演奏和账号云同步。">
   <title>三角洲口风琴 · Android</title>
-  <link rel="stylesheet" href="android.css">
+  <link rel="stylesheet" href="android.css?v=20260914-tutorial">
 </head>
 <body>
   <header><a class="brand" href="https://aiygzn.top/melodica/">▥ 三角洲口风琴</a><nav><a href="https://aiygzn.top/melodica/">Windows 版</a><a href="android-data.html">权限与数据</a></nav></header>
@@ -15,6 +15,7 @@
         <p class="meta">v0.6.0 · Android 8.0+ · 无需 Root</p>
         <a class="primary" href="downloads/delta-melodica-android-v0.6.0.apk" download>下载 Android APK <span>↗</span></a>
         <p class="small">66.3 KB · 正式签名 · <a href="#install">安装与升级说明</a></p>
+        <a class="tutorial-link" href="#tutorial">▶ 观看安装使用教程 <span>约 2 分钟</span></a>
       </div>
       <figure class="phone"><img src="assets/android-main-v0.6.0.png" alt="安卓客户端的曲库、服务连接和演奏设置界面" width="1080" height="2400"><figcaption>安卓客户端实际界面</figcaption></figure>
     </section>
@@ -23,6 +24,17 @@
       <article><b>02 / 校准</b><h2>对准 12 个按钮</h2><p>校准八个音键及四个变音按钮，绑定目标应用、屏幕尺寸和方向；更换键位后重新校准。</p></article>
       <article><b>03 / 演奏</b><h2>控制始终在手边</h2><p>3 秒倒计时后开始。暂停保留进度，停止回到曲首；切出目标应用或锁屏时暂停。</p></article>
     </div></section>
+    <section id="tutorial" class="panel"><p class="eyebrow">手机实录 / 约 2 分钟</p><h2>Android 安装使用教程</h2>
+      <p>跟着手机实录完成安装和使用。可暂停查看步骤，或切换全屏观看。</p>
+      <figure class="tutorial-video">
+        <div class="tutorial-player">
+          <video id="demo-video" controls playsinline preload="none" width="1608" height="1080" poster="assets/android-install-20260914.jpg" aria-describedby="tutorial-caption video-status" data-stream="videos/android-install-20260914/index.m3u8">当前浏览器不支持内嵌视频，请使用下方 MP4 兼容播放链接。</video>
+          <button id="video-start" type="button" hidden>▶ 播放安装使用教程</button>
+        </div>
+        <figcaption id="tutorial-caption"><span>2026 年 9 月 14 日录制 · 保留完整画面与原声</span><a href="videos/android-install-20260914.mp4" target="_blank" rel="noopener">MP4 兼容播放</a></figcaption>
+      </figure>
+      <p id="video-status" class="small" role="status">点击播放后才加载视频，不自动播放。</p>
+    </section>
     <section id="install" class="panel"><p class="eyebrow">安装与升级</p><h2>第一次使用，先完成连接与校准。</h2>
       <ol><li>下载并安装 APK。按手机提示允许当前浏览器安装此应用；部分系统还需在应用详情中允许受限设置，可参照 <a href="https://support.google.com/android/answer/12623953?hl=zh-Hans">Android 官方说明</a>。</li><li>打开应用，阅读「权限与数据说明」。点击「开启无障碍服务」，由你在系统设置中开启演奏服务。</li><li>先用内置曲目和本地测试键盘试用，再进入游戏演奏画面完成 12 点校准。</li><li>显示悬浮控制条，播放前确认半音当前状态。平时「停止并隐藏」保留授权；如需撤销，在系统无障碍设置中关闭服务。</li></ol>
       <div class="upgrade"><strong>从旧预览版升级</strong><p>旧 v0.5 等预览包与本包签名不同，不能直接覆盖。先在旧包同步曲库并在官网确认可下载，或保留原始曲谱文件，再卸载旧包、安装正式包并重新校准。没有备份的曲谱不要先卸载。后续使用同一正式签名的版本可覆盖升级。</p></div>
@@ -34,6 +46,7 @@
     </section>
   </main>
   <footer><span>三角洲口风琴 · Android</span><a href="https://github.com/gujingyun/delta-melodica/issues">问题反馈</a></footer>
+  <script src="video-player.js" defer></script>
 </body>
 </html>
 
