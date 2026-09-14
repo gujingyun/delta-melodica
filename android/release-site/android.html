@@ -12,9 +12,9 @@
   <main>
     <section class="hero">
       <div><p class="eyebrow">DELTA MELODICA / ANDROID</p><h1>把熟悉的旋律，<br>带进手游。</h1><p class="lead">选择一首曲谱，校准游戏音键。<br>用悬浮控制条播放、暂停和继续。</p>
-        <p class="meta">v0.6.0 · Android 8.0+ · 无需 Root</p>
+        <p class="meta">v@@VERSION@@ · Android 8.0+ · 无需 Root</p>
         <a class="primary" href="api/download/android" download>下载 Android APK <span>↗</span></a>
-        <p class="small">66.3 KB · 正式签名 · <a href="#install">安装与升级说明</a></p>
+        <p class="small">@@SIZE@@ · 正式签名 · <a href="#install">安装与升级说明</a></p>
         <a class="tutorial-link" href="#tutorial">▶ 观看安装使用教程 <span>约 2 分钟</span></a>
       </div>
       <figure class="phone"><img src="assets/android-main-v0.6.0.png" alt="安卓客户端的曲库、服务连接和演奏设置界面" width="1080" height="2400"><figcaption>安卓客户端实际界面</figcaption></figure>
@@ -40,8 +40,8 @@
       <div class="upgrade"><strong>从旧预览版升级</strong><p>旧 v0.5 等预览包与本包签名不同，不能直接覆盖。先在旧包同步曲库并在官网确认可下载，或保留原始曲谱文件，再卸载旧包、安装正式包并重新校准。没有备份的曲谱不要先卸载。后续使用同一正式签名的版本可覆盖升级。</p></div>
       <p>注册会继承并上传尚未归属账号的游客曲谱；已有账号可自行选择合并。游客可继续本地导入与演奏。详见 <a href="android-data.html">权限与数据说明</a>。</p>
     </section>
-    <section class="panel"><p class="eyebrow">版本与校验</p><h2>v0.6.0 更新内容</h2><ul><li>兼容官网 MIDI 与 JSON 曲谱，修复 JSON 曲目下载失败。</li><li>加入正式签名构建与安装包校验。</li><li>新增离线权限与数据说明，说明账号同步及旧预览包迁移方式。</li></ul>
-      <details><summary>查看 APK 与签名证书校验值</summary><p>APK SHA-256</p><code>c08a157e1e72f276961dfdfaf66c86859a50c8e474804de75dc039989c9fbb39</code><p>签名证书 SHA-256</p><code>fbb496e1dfe34cbaefe4e07fc6ab82480ca1b52807c5d86ac7fa49aa1231154c</code><p><a href="downloads/delta-melodica-android-v0.6.0.apk.sha256">下载校验文件</a></p></details>
+    <section class="panel"><p class="eyebrow">版本与校验</p><h2>v@@VERSION@@ 更新内容</h2><ul><li>兼容官网 MIDI 与 JSON 曲谱，修复 JSON 曲目下载失败。</li><li>加入正式签名构建与安装包校验。</li><li>新增离线权限与数据说明，说明账号同步及旧预览包迁移方式。</li></ul>
+      <details><summary>查看 APK 与签名证书校验值</summary><p>APK SHA-256</p><code>@@SHA256@@</code><p>签名证书 SHA-256</p><code>@@CERT@@</code><p><a href="downloads/@@APK@@.sha256">下载校验文件</a></p></details>
       <p class="small">独立开发工具，与游戏官方无隶属关系。不同手机的后台限制、触摸响应及游戏听感会有差异；模拟器测试不代表手游兼容认证。</p>
     </section>
   </main>
@@ -49,4 +49,3 @@
   <script src="video-player.js" defer></script>
 </body>
 </html>
-
