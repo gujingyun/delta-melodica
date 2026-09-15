@@ -67,6 +67,7 @@ public final class MainActivity extends Activity {
         action(importRow, "导入 MIDI / 简谱", this::importFile, false);
         action(importRow, "输入简谱", this::editScore, false);
         action(libraryCard, "线上曲库", () -> startActivityForResult(new Intent(this, OnlineLibraryActivity.class), 11), false);
+        action(libraryCard, "搜简谱 / MIDI", () -> startActivityForResult(new Intent(this, ResourceSearchActivity.class), 13), false);
         LinearLayout params = card("03  调整演奏");
         text(params, "速度倍率", 12, 0xffa7bebc);
         Spinner speeds = new Spinner(this); params.addView(speeds);
@@ -211,8 +212,8 @@ public final class MainActivity extends Activity {
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (request == 12) {library = new Library(this); refreshLibrary(); return;}
-        if (request == 11 && result == RESULT_OK && data != null && data.getStringExtra("songId") != null) {
-            settings.selected(data.getStringExtra("songId")); refreshLibrary(); toast("已选用线上曲目，可离线演奏"); return;
+        if ((request == 11 || request == 13) && result == RESULT_OK && data != null && data.getStringExtra("songId") != null) {
+            settings.selected(data.getStringExtra("songId")); refreshLibrary(); toast("已选用曲目，可离线演奏"); return;
         }
         if (request != 10 || result != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData(); toast("正在导入曲谱…");
