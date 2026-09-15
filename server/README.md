@@ -57,3 +57,15 @@ SQLite 采用默认回滚日志与短事务，密码计算、网络请求均在�
 桌面账号回归：`python -m unittest -v test_accounts test_account_client`（Windows，含 Tk 窗口测试）。浏览器测试先在仓库根目录运行 `python server/test_web_server.py`，然后在另一终端执行 `npm --prefix website install` 和 `npm --prefix website run test:accounts`，需要本机 Chrome。也可用环境变量 `PLAYWRIGHT_MODULE` 指向已安装的 Playwright 模块目录。
 
 浏览器脚本访问本机 `127.0.0.1:8767`，使用虚构邮箱，不发送真实邮件。临时数据库由测试服务退出时清理，测试截图与假邮件位于忽略目录 `work/accounts-web/`。这个测试服务放宽验证码发送间隔，仅供联调，绝不能用于生产。正式服务仍使用 `server.accounts:create_app`。
+
+## DDoS 应急防护
+
+官网主机出现应用层洪泛或 SSH 连接爆发时，可在云控制台或现有管理终端执行仓库中的防护脚本：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gujingyun/delta-melodica/master/server/harden-ddos.sh | sudo bash
+```
+
+脚本会自动备份现有配置，并配置官网/API 的 Nginx 按来源限速、连接数限制、基础 TCP 参数和 SSH Fail2ban；Nginx 配置测试失败时会恢复本次修改。执行前必须确认云控制台或备用管理入口可用，因为任何主机级防护都不能替代云厂商的 DDoS 清洗。
+
+脚本不会修改云安全组，也不会自动开放或关闭 SSH 端口。仍需在云厂商控制台开启 DDoS 清洗/WAF，并让源站只允许 CDN/WAF 回源；带宽型攻击必须由上游清洗。
