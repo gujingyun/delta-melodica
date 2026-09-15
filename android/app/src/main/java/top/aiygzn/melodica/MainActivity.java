@@ -139,7 +139,7 @@ public final class MainActivity extends Activity {
             refreshing = true; tracks.setOnItemSelectedListener(null); adapter(tracks, labels.toArray(new String[0])); tracks.setSelection(0); refreshing = false;
             tracks.setOnItemSelectedListener(listener(i -> { if (!refreshing) { selected = original.melody(trackIds.get(i)); prepare(); describe(); } }));
             selected = original.melody(trackIds.get(0)); prepare(); describe();
-        } catch (Exception e) { toast("曲谱读取失败：" + e.getMessage()); }
+        } catch (Exception e) { toast("曲谱读取失败：" + ErrorMessages.userMessage(e, "请检查曲谱后重试")); }
     }
     private void describe() { if (selected != null) songInfo.setText(selected.notes.size() + " 个旋律音  ·  原曲 " + MelodicaService.time(selected.duration)); }
     private void prepare() { if (selected != null && MelodicaService.instance != null) MelodicaService.instance.load(selected); }
@@ -203,7 +203,7 @@ public final class MainActivity extends Activity {
         dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
             try { Score score = Score.jianpu(notes.getText().toString(), Double.parseDouble(bpm.getText().toString()), title.getText().toString().trim().isEmpty() ? "自定义简谱" : title.getText().toString().trim());
                 settings.selected(library.save(score)); settings.editor(notes.getText().toString()); refreshLibrary(); dialog.dismiss();
-            } catch (Exception e) { notes.setError(e.getMessage()); }
+            } catch (Exception e) { notes.setError(ErrorMessages.userMessage(e, "简谱格式不正确")); }
         })); dialog.show();
     }
     private void importFile() {
@@ -239,7 +239,7 @@ public final class MainActivity extends Activity {
                 }
                 String id = library.save(score);
                 runOnUiThread(() -> { settings.selected(id); if (!isDestroyed()) { refreshLibrary(); toast("已加入曲库"); } });
-            } catch (Exception e) { runOnUiThread(() -> { if (!isDestroyed()) toast("导入失败：" + e.getMessage()); }); }
+            } catch (Exception e) { runOnUiThread(() -> { if (!isDestroyed()) toast("导入失败：" + ErrorMessages.userMessage(e, "请检查文件格式后重试")); }); }
         }, "导入曲谱").start();
     }
 }

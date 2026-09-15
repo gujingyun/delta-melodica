@@ -262,7 +262,10 @@ public final class ResourceSearchActivity extends Activity {
         }));
     }
 
-    private String shortError(Exception error) { String value = error.getMessage(); return value == null || value.isEmpty() ? "网络或曲谱格式异常" : value.length() > 120 ? value.substring(0, 120) : value; }
+    private String shortError(Exception error) {
+        String value = ErrorMessages.userMessage(error, "网络或曲谱格式异常");
+        return value.length() > 120 ? value.substring(0, 120) : value;
+    }
 
     @Override protected void onDestroy() { request++; cancelJobs(); worker.shutdownNow(); super.onDestroy(); }
 }

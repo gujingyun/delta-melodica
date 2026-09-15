@@ -139,7 +139,7 @@ public final class MelodicaService extends AccessibilityService {
         panel.addOnLayoutChangeListener((v, l, t, r, b, oldL, oldT, oldR, oldB) -> {
             if (panel != null && constrainPanel()) windows.updateViewLayout(panel, panelParams);
         });
-        try { windows.addView(panel, panelParams); } catch (RuntimeException e) { panel = null; notifyUser("悬浮窗创建失败：" + e.getMessage()); }
+        try { windows.addView(panel, panelParams); } catch (RuntimeException e) { panel = null; notifyUser("悬浮窗创建失败：" + ErrorMessages.userMessage(e, "请检查悬浮窗权限")); }
         render();
     }
     private Button button(LinearLayout row, String text, Runnable click) {
@@ -241,7 +241,7 @@ public final class MelodicaService extends AccessibilityService {
                 if (p == null) throw new IllegalArgumentException("请重新校准「" + Score.LABELS[point] + "」");
                 if (covers(p)) throw new IllegalArgumentException("悬浮窗挡住了「" + Score.LABELS[point] + "」，请拖到空白区域");
             }
-        } catch (IllegalArgumentException e) { notifyUser(e.getMessage()); return false; }
+        } catch (IllegalArgumentException e) { notifyUser(ErrorMessages.userMessage(e, "校准设置无效")); return false; }
         return true;
     }
     private void dismissHalfPrompt() {

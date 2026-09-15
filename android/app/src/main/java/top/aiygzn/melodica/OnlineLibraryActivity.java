@@ -120,7 +120,7 @@ public final class OnlineLibraryActivity extends Activity {
         });
     }
     private void showFailure(int token, String message, Exception error) {
-        runOnUiThread(() -> { if (current(token)) { busy = false; render(); status.setText(message + "\n" + (error.getMessage() == null ? "网络或曲谱格式异常" : error.getMessage())); } });
+        runOnUiThread(() -> { if (current(token)) { busy = false; render(); status.setText(message + "\n" + ErrorMessages.userMessage(error, "网络或曲谱格式异常")); } });
     }
     @Override protected void onDestroy() { request++; worker.shutdownNow(); super.onDestroy(); }
 }

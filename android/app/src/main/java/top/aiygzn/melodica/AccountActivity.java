@@ -75,7 +75,7 @@ public final class AccountActivity extends Activity {
         running = true; status.setText("正在处理…"); for (android.view.View view : controls) view.setEnabled(false);
         new Thread(() -> {
             String message;
-            try {message = work.run();} catch (Exception error) {message = "未完成：" + (error.getMessage() == null ? "请检查网络并重试；本机曲谱仍保留" : error.getMessage());}
+            try {message = work.run();} catch (Exception error) {message = "未完成：" + ErrorMessages.userMessage(error, "请检查网络并重试；本机曲谱仍保留");}
             final String result = message;
             runOnUiThread(() -> {
                 if (isDestroyed() || isFinishing()) return;
