@@ -1,6 +1,6 @@
 # 账号与私有云端曲库
 
-账号 API 与静态官网、客户端界面分开运行。保留原有 3002 端口统计服务，新增 3003 端口账号服务。Python 3.13；客户端无需安装后端依赖。
+账号 API 与静态官网、客户端界面分开运行。保留原有 3002 端口统计服务，新增 3003 端口账号服务和 3004 端口公开曲库后台服务。Python 3.13；客户端无需安装后端依赖。
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r server\requirements-test.txt
@@ -9,6 +9,33 @@
 ```
 
 默认数据目录 `work/account-server`。未配置 SMTP 时发验证码会明确返回 503；不会跳过邮箱验证，也不会将验证码回传给客户端或写入日志。自动化测试使用临时目录与注入的假邮件投递器，不发送真实邮件。
+
+## 公开线上曲库后台上传
+
+`public_library.py` 是独立的公开曲库上传服务，默认只监听 `127.0.0.1:3004`。它不复用账号会话，上传接口必须同时经过 Nginx Basic Auth 和 `MELODICA_PUBLIC_LIBRARY_TOKEN` Bearer 令牌；令牌只放在服务器环境文件，不写入仓库、日志或响应。
+
+接口路径经 Nginx 代理后为 `POST /melodica/admin-api/library/songs`，请求使用 `multipart/form-data`：
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `file` | 是 | `.mid`、`.midi` 或 `.json`；MIDI 最大 10 MB，曲谱 JSON 最大 2 MB |
+| `title` | 否 | 曲名，最多 100 个字符；不填时使用文件或曲谱中的曲名 |
+| `artist` | 否 | 作者，最多 100 个字符 |
+| `description` | 否 | 公开说明，最多 300 个字符 |
+| `id` | 否 | 曲目编号，只能使用字母、数字、点、下划线和短横线；不填时按内容摘要生成 |
+
+例如在已通过 Nginx 登录后台后，令牌从受限环境变量读取，不要把真实令牌写进命令历史：
+
+```bash
+curl -u '后台用户名:后台密码' \
+  -H "Authorization: Bearer ${MELODICA_PUBLIC_LIBRARY_TOKEN}" \
+  -F 'file=@./new-song.mid' -F 'title=新曲' -F 'artist=作者' \
+  https://aiygzn.top/melodica/admin-api/library/songs
+```
+
+服务端会解析并校验 MIDI／曲谱音符，曲谱 JSON 只保留跨端演奏数据和可编辑原谱字段，自动移除本地路径、源站网址等私密附注；随后计算大小和 SHA-256，更新 `songs/` 与 `songs.json`。发布事务使用文件锁和同目录原子替换，按内容幂等：重复上传返回 200，新增曲目返回 201，编号或内容冲突返回 409。`GET /melodica/admin-api/library/songs` 可读取当前公开目录，`/health` 只用于本机服务检查。
+
+部署时复制 `public-library.env.example` 为 `/etc/delta-melodica-public-library.env`，用 `openssl rand -hex 32` 生成令牌并将文件权限设为 0600；创建 `melodica-public-library` 专用用户，使其只能写官网曲库目录和 `/var/lib/delta-melodica-public-library` 锁目录。安装 `delta-melodica-public-library.service` 后，先执行 `nginx -t`，再平滑 reload。不要给该服务配置生产数据库权限，也不要把上传入口放进公开静态目录。
 
 ## 发信与部署
 
@@ -39,6 +66,8 @@
 | GET | `/library/songs` | 当前账号目录，最多 500 首 |
 | POST | `/library/songs` | 标准曲谱 JSON；按内容去重，只添加到当前账号 |
 | GET / DELETE | `/library/songs/{id}` | 读取／移除当前账号的曲目；删除写请求带 `{}` |
+
+公开曲库后台 API 使用独立的 `3004` 本机服务，接口和部署说明见上方“公开线上曲库后台上传”；它不属于账号私有曲库接口。
 
 密码为 10～128 字符，使用 Argon2id。验证码 6 位，10 分钟有效，最多错 5 次；同邮箱发信间隔 60 秒，每小时最多 5 次，IP 每小时最多 10 次。登录按邮箱和 IP 限流。验证码使用服务器密钥 HMAC，会话仅保存摘要。密钥 `otp-secret` 不可提交 Git。
 

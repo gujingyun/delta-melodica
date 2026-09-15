@@ -1,0 +1,22 @@
+[Unit]
+Description=三角洲口风琴公开曲库后台上传 API
+After=network.target
+
+[Service]
+Type=simple
+User=melodica-public-library
+Group=melodica-public-library
+WorkingDirectory=/opt/delta-melodica
+EnvironmentFile=/etc/delta-melodica-public-library.env
+ExecStart=/opt/delta-melodica/.venv/bin/uvicorn server.public_library:create_app --factory --host 127.0.0.1 --port 3004 --proxy-headers --forwarded-allow-ips 127.0.0.1 --no-access-log
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/usr/share/nginx/html/melodica /var/lib/delta-melodica-public-library
+
+[Install]
+WantedBy=multi-user.target
