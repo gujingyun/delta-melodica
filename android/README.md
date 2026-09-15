@@ -40,8 +40,8 @@
 正式构建使用仓库外的独立 RSA 签名，不接受调试证书或可调试 APK。首次在本机生成签名后，所有后续正式版必须复用此密钥：
 
 ```powershell
-.\init-signing.ps1 -JavaHome '你的 JDK 21 目录'
-.\build.ps1 -Configuration Release -WithDeviceTests -JavaHome '你的 JDK 21 目录' -SdkRoot '你的 Android SDK 目录'
+.\init-signing.ps1 -JavaHome '你的 JDK 17 或更高版本目录'
+.\build.ps1 -Configuration Release -WithDeviceTests -JavaHome '你的 JDK 17 或更高版本目录' -SdkRoot '你的 Android SDK 目录'
 ```
 
 默认签名资料位于 `%LOCALAPPDATA%\DeltaMelodicaSigning\android`，密码以 Windows DPAPI 加密，仅当前 Windows 用户可解密。不要提交、发布或自动重建密钥；上线前需另外制作可信的加密备份，单独复制 `password.clixml` 到其他电脑不能恢复密码。官方签名说明见 [Android 文档](https://developer.android.com/studio/publish/app-signing)。
@@ -122,15 +122,15 @@ adb -s 测试设备序列号 shell am instrument -w top.aiygzn.melodica.test/top
 
 ## 构建与验证
 
-使用 Android Studio 自带的 JDK 21，安装 Android SDK Platform 34 与 Build Tools 36.0.0。设置 `JAVA_HOME` 和 `ANDROID_HOME`，或在本目录不入库的 `local.properties` 中指定 `sdk.dir`。
+使用 JDK 17 或更高版本，安装 Android SDK Platform 34 与 Build Tools 36.0.0。设置 `JAVA_HOME` 和 `ANDROID_HOME`，或在本目录不入库的 `local.properties` 中指定 `sdk.dir`。
 
 ```powershell
-.\build.ps1 -JavaHome '你的 JDK 21 目录' -SdkRoot '你的 Android SDK 目录'
+.\build.ps1 -JavaHome '你的 JDK 17 或更高版本目录' -SdkRoot '你的 Android SDK 目录'
 ```
 
 项目固定 Gradle 9.2.1 和 Android Gradle Plugin 9.0.1。Java 源码采用 UTF-8；Gradle 进程采用 `file.encoding=COMPAT`，使 Windows 中文路径的测试进程参数文件与系统编码一致。APK 位于 `app\build\outputs\apk\debug\app-debug.apk`，为本地测试签名的预览包。
 
-构建脚本先执行 `clean testDebugUnitTest assembleDebug lintDebug`，成功后复制到仓库根目录 `dist\三角洲口风琴_安卓_v0.5预览版.apk`，并输出 SHA-256。使用完整清理构建，避免增量打包残留旧 dex。
+构建脚本先执行 `clean testDebugUnitTest assembleDebug lintDebug`，成功后复制到仓库根目录 `dist\三角洲口风琴_安卓_v0.5预览版.apk`，并输出 SHA-256。Release 构建同样复用 Debug 源码单元测试，再执行 Release Lint 和正式 APK 构建。使用完整清理构建，避免增量打包残留旧 dex。
 
 26 项单元测试覆盖简谱、MIDI、旋律整理、音高映射、暂停续播、倒计时取消、变音状态、顺序点击批次、提前切换的时钟截止点，以及线上目录校验、搜索、HTTPS 地址、下载大小与哈希、取消、本地去重保存和云端交换格式。JSON 测试依赖只在本机测试运行，不打入 APK。
 

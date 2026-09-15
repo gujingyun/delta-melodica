@@ -7,7 +7,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if (-not $JavaHome -or -not (Test-Path -LiteralPath (Join-Path $JavaHome 'bin\java.exe'))) {
-    throw '请将 JAVA_HOME 设置为 JDK 21，或传入 -JavaHome。可使用 Android Studio 自带的 jbr 目录。'
+    throw '请将 JAVA_HOME 设置为 JDK 17 或更高版本，或传入 -JavaHome。可使用 Android Studio 自带的 jbr 目录。'
 }
 if (-not $SdkRoot -or -not (Test-Path -LiteralPath (Join-Path $SdkRoot 'platforms\android-34\android.jar'))) {
     throw '请将 ANDROID_HOME 设置为包含 Platform 34 的 SDK，或传入 -SdkRoot。'
@@ -37,8 +37,8 @@ try {
     Push-Location -LiteralPath $PSScriptRoot
     try {
         $taskVariant = $Configuration.ToLowerInvariant()
-        # 清理后执行对应发行变体的测试及 Lint，再构建最终 APK。
-        $taskArguments = @('clean', "test${Configuration}UnitTest", "lint${Configuration}", "assemble${Configuration}")
+        # 当前 AGP 仅提供 Debug 单元测试任务；Release 复用同一套源码测试，再执行 Release Lint 和 APK 构建。
+        $taskArguments = @('clean', 'testDebugUnitTest', "lint${Configuration}", "assemble${Configuration}")
         if ($WithDeviceTests) { $taskArguments += @("-PtestBuildType=$taskVariant", "assemble${Configuration}AndroidTest") }
         & .\gradlew.bat @taskArguments --no-daemon --console plain
         if ($LASTEXITCODE -ne 0) { throw '安卓测试或构建失败，停止交付。' }
