@@ -7,7 +7,7 @@ if (-not (Test-Path -LiteralPath '.venv\Scripts\python.exe')) {
 $pythonPath = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
 & $pythonPath -m pip install -r requirements.txt 'pyinstaller==6.11.1'
 if ($LASTEXITCODE -ne 0) { throw '安装构建依赖失败。' }
-& $pythonPath -m unittest -v test_music test_online_library.OnlineLibraryTests test_image_score_download
+& $pythonPath -m unittest -v test_music test_online_library.OnlineLibraryTests test_image_score_download test_error_messages
 if ($LASTEXITCODE -ne 0) { throw '自动化测试失败，停止打包。' }
 & $pythonPath -m PyInstaller --noconfirm --clean --onefile --windowed --uac-admin --name '三角洲口风琴' --hidden-import mido --hidden-import pystray._win32 app.py
 if ($LASTEXITCODE -ne 0) { throw '打包失败。' }
