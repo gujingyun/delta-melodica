@@ -6,6 +6,8 @@ import threading
 from PIL import Image, ImageDraw
 import pystray
 
+from error_messages import user_error
+
 
 def tray_image():
     image = Image.new("RGBA", (64, 64))
@@ -54,7 +56,7 @@ class Tray:
             self.ready.set()
             self.notify("tray_ready", None)
         except Exception as error:
-            self.notify("tray_error", str(error))
+            self.notify("tray_error", user_error(error, "系统托盘启动失败"))
             icon.stop()
 
     def _run(self):
@@ -62,7 +64,7 @@ class Tray:
         try:
             self.icon.run(self._setup)
         except Exception as failure:
-            error = str(failure)
+            error = user_error(failure, "系统托盘启动失败")
         finally:
             self.ready.clear()
             if not self.closed.is_set():

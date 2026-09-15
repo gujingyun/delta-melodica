@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 import webbrowser
 
+from error_messages import user_error
 from resource_search import SOURCES, SearchCancelled, SearchProblem, download_resource, search_all, search_url
 
 
@@ -16,7 +17,7 @@ def _download_worker(song, folder, mapping, cancel, events, preview, mode):
     except SearchCancelled:
         pass
     except Exception as error:
-        events.put(("download", (song, None, preview, str(error))))
+        events.put(("download", (song, None, preview, user_error(error, "下载或转换失败，请稍后重试"))))
 
 
 class ResourceSearchDialog:
@@ -241,10 +242,10 @@ class ResourceSearchDialog:
                         self.more.discard(source)
                         if isinstance(error, SearchProblem) and error.browser_required:
                             self.browser_sources.add(source)
-                            self.source_status[source] = str(error)
+                            self.source_status[source] = user_error(error, "需要在源站完成验证后重试")
                         else:
-                            self.source_status[source] = f"不可用：{str(error)[:130]}"
-                        self.app.log.warning("聚合搜索失败：来源=%s；%s", source, error)
+                            self.source_status[source] = f"不可用：{user_error(error, '来源暂时不可用')[:130]}"
+                        self.app.log.warning("聚合搜索失败：来源=%s；%s", source, user_error(error, "来源暂时不可用"))
                     else:
                         self.pages[source] = self.requested_pages[source]
                         self.more.discard(source)
@@ -278,8 +279,9 @@ class ResourceSearchDialog:
                     self.downloading = False
                     self._buttons()
                     if error:
-                        self.status.set(f"下载转换失败：{error[:220]}。可打开源网页查看。")
-                        self.app.log.warning("聚合下载失败：%s；%s", song.page_url, error)
+                        safe_error = user_error(error, "下载或转换失败，请稍后重试")
+                        self.status.set(f"下载转换失败：{safe_error[:220]}。可打开源网页查看。")
+                        self.app.log.warning("聚合下载失败：%s；%s", song.page_url, safe_error)
                         continue
                     self.app.log.info("聚合下载完成：%s；来源=%s；网页=%s；文件=%s", song.title, song.source, song.page_url, path)
                     if self.app.busy or self.app.player.active:

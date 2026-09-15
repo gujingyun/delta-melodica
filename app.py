@@ -31,6 +31,7 @@ from win_input import (Hotkeys, PreviewOutput, WindowsOutput, foreground, target
 from account_client import AccountClient
 from account_ui import AccountPanel
 from cloud_score import to_song
+from error_messages import user_error
 from score_file import read_score_data, score_from_data, validate_score_file
 
 BG = "#101413"
@@ -136,7 +137,7 @@ class App:
         except FileNotFoundError:
             pass
         except (ValueError, TypeError, AttributeError, OSError) as error:
-            self.load_error = f"设置读取失败，已使用默认值：{error}"
+            self.load_error = f"设置读取失败，已使用默认值：{user_error(error)}"
         self.song_preferences = {}
         try:
             saved = json.loads((self.account.profile_dir / "song-settings.json").read_text(encoding="utf-8"))
@@ -146,7 +147,7 @@ class App:
         except FileNotFoundError:
             pass
         except (ValueError, OSError) as error:
-            self.load_error = f"曲目设置读取失败，已使用默认值：{error}"
+            self.load_error = f"曲目设置读取失败，已使用默认值：{user_error(error)}"
         self.events = queue.Queue()
         self.player = Player(lambda run_id, kind, value: self.events.put(("player", (run_id, kind, value))))
         self.song, self.plan, self.current_source = None, None, None
@@ -201,7 +202,7 @@ class App:
             try:
                 self.tray = Tray(lambda kind, value: self.events.put((kind, value)))
             except Exception as error:
-                self.events.put(("tray_error", str(error)))
+                self.events.put(("tray_error", user_error(error, "系统托盘启动失败")))
         self.hotkeys = None if smoke else Hotkeys(
             lambda: self.events.put(("toggle", None)),
             lambda: self.stop("F9"),
@@ -462,8 +463,8 @@ class App:
             self.log.info("用户请求以管理员身份重新启动")
             restart_as_admin(self.data_dir)
         except OSError as error:
-            self.log.warning("管理员启动失败：%s", error)
-            self.detail.set(str(error))
+            self.log.warning("管理员启动失败：%s", user_error(error))
+            self.detail.set(user_error(error, "管理员启动失败，请稍后重试。"))
             return
         self.close()
 
@@ -765,9 +766,10 @@ class App:
             self._update_delete_button()
             self.title.set("曲目读取失败")
             self.stats.set("")
-            self.detail.set(str(error))
+            safe_error = user_error(error, "曲目文件无法读取，请检查文件后重试。")
+            self.detail.set(safe_error)
             self.draw_roll()
-            messagebox.showerror("无法读取曲目", str(error), parent=self.root)
+            messagebox.showerror("无法读取曲目", safe_error, parent=self.root)
 
     def song_preference_key(self):
         kind, value = self.current_source
@@ -798,7 +800,7 @@ class App:
         try:
             self.segments = validate_segments(saved.get("segments", []), self.song.duration)
         except ValueError as error:
-            warning = f"已保存的片段不可用，暂用全曲：{error}"
+            warning = f"已保存的片段不可用，暂用全曲：{user_error(error)}"
         return warning
 
     def save_song_preferences(self):
@@ -817,8 +819,8 @@ class App:
             temporary.replace(destination)
             self.song_preferences = candidate
         except OSError as error:
-            self.log.warning("曲目设置保存失败：%s", error)
-            self.detail.set(f"本次调整已生效，但曲目设置未保存：{error}")
+            self.log.warning("曲目设置保存失败：%s", user_error(error))
+            self.detail.set(f"本次调整已生效，但曲目设置未保存：{user_error(error)}")
 
     def rebuild_plan(self, preserve_position=False, save_preferences=True, segments=None):
         if not self.song or (self.busy and not preserve_position):
@@ -862,7 +864,7 @@ class App:
             elif segments is None:
                 self.plan = None
                 self.status.set("请检查设置")
-            self.detail.set(str(error))
+            self.detail.set(user_error(error, "当前设置无法应用，请检查参数后重试。"))
             return False
 
     def original_position(self):
@@ -1050,7 +1052,7 @@ class App:
                 draft[:] = candidate
                 refresh(index)
             except (ValueError, OverflowError) as error:
-                error_text.set(str(error))
+                error_text.set(user_error(error))
 
         def remove():
             index = selected_index()
@@ -1089,7 +1091,7 @@ class App:
                 error_text.set(f"已导出 {len(segments)} 个片段：{Path(filename).name}。" if segments
                                else f"已导出全曲设置：{Path(filename).name}。")
             except (ValueError, OSError) as error:
-                error_text.set(f"导出失败：{error}")
+                error_text.set(f"导出失败：{user_error(error)}")
 
         saving = [False]
 
@@ -1166,7 +1168,7 @@ class App:
                 shutil.copy2(path, destination)
                 last = destination
             except Exception as error:
-                errors.append(f"{Path(filename).name}：{error}")
+                errors.append(f"{Path(filename).name}：{user_error(error)}")
         if last:
             self._load_library(last)
         if errors:
@@ -1191,7 +1193,7 @@ class App:
             from score_editor import ScoreEditor
             self.score_editor = ScoreEditor(self, new=new)
         except (ValueError, OSError, KeyError, TypeError) as error:
-            messagebox.showerror("无法新建简谱" if new else "无法编辑乐曲", str(error), parent=self.root)
+            messagebox.showerror("无法新建简谱" if new else "无法编辑乐曲", user_error(error), parent=self.root)
 
     def score_dialog(self):
         self.edit_song(new=True)
@@ -1236,7 +1238,7 @@ class App:
                 dialog.destroy()
                 self.rebuild_plan()
             except (ValueError, OSError) as error:
-                messagebox.showerror("设置未保存", str(error), parent=dialog)
+                messagebox.showerror("设置未保存", user_error(error), parent=dialog)
         ttk.Button(dialog, text="保存设置", command=save, style="Accent.TButton").pack(anchor="e", padx=24, pady=(0, 20))
 
     def _set_busy(self, busy):
@@ -1274,14 +1276,14 @@ class App:
             if path.resolve().parent != library_root or not path.is_file():
                 raise OSError("曲目文件不在本地曲库目录中。")
         except OSError as error:
-            self.detail.set(f"无法删除曲目：{error}")
+            self.detail.set(f"无法删除曲目：{user_error(error)}")
             return
         if not messagebox.askyesno("删除曲目", f"确定删除“{name}”吗？\n\n这只会删除曲库副本，不会影响原始 MIDI 文件。", parent=self.root):
             return
         try:
             path.unlink()
         except OSError as error:
-            messagebox.showerror("删除失败", f"无法删除曲目文件：{error}", parent=self.root)
+            messagebox.showerror("删除失败", f"无法删除曲目文件：{user_error(error)}", parent=self.root)
             return
         preference_key = f"file:{path.name}"
         candidate = self.song_preferences.copy()
@@ -1294,8 +1296,8 @@ class App:
             self.song_preferences = candidate
             message = f"已删除曲目“{name}”。"
         except OSError as error:
-            self.log.warning("删除曲目后的设置清理失败：%s", error)
-            message = f"已删除曲目“{name}”，但对应参数记忆清理失败：{error}"
+            self.log.warning("删除曲目后的设置清理失败：%s", user_error(error))
+            message = f"已删除曲目“{name}”，但对应参数记忆清理失败：{user_error(error)}"
         self._load_library()
         self.detail.set(message)
 
@@ -1375,7 +1377,7 @@ class App:
             self._set_busy(True)
         except Exception as error:
             self._set_busy(False)
-            self.detail.set(str(error))
+            self.detail.set(user_error(error, "试听或演奏启动失败，请检查音频设备后重试。"))
 
     def stop(self, source="停止按钮"):
         self.log.info("停止请求：%s", source)
@@ -1508,13 +1510,13 @@ class App:
                         continue
                     self.online_catalog_list.configure(state="normal")
                     if error:
-                        self.log.warning("读取线上曲库失败：%s", error)
+                        self.log.warning("读取线上曲库失败：%s", user_error(error, "网络连接失败"))
                         self.online_catalog = []
                         self.online_filtered_songs = []
                         self.online_visible_songs = []
                         self.online_catalog_list.delete(0, "end")
                         self.online_catalog_status.set("无法读取线上曲库，请检查网络后点击“刷新目录”重试。")
-                        self.online_catalog_detail.set(str(error))
+                        self.online_catalog_detail.set(user_error(error, "网络连接失败，请稍后重试。"))
                         self.online_page_label.set("目录不可用")
                         self.online_prev_button.configure(state="disabled")
                         self.online_next_button.configure(state="disabled")
@@ -1530,10 +1532,12 @@ class App:
                         continue
                     self.online_operation = self.online_operation_kind = None
                     if error:
-                        self.log.warning("下载线上曲目失败：%s；曲目=%s", error, song.title)
+                        self.log.warning("下载线上曲目失败：%s；曲目=%s", user_error(error, "网络或曲谱格式异常"), song.title)
                         if self._online_dialog_alive():
                             self.online_catalog_list.configure(state="normal")
-                            self.online_catalog_status.set(f"下载“{song.title}”失败：{error}")
+                            self.online_catalog_status.set(
+                                f"下载“{song.title}”失败：{user_error(error, '网络或曲谱格式异常，请稍后重试。')}"
+                            )
                             self._select_online_song()
                             self._update_online_pagination_buttons()
                         continue
@@ -1550,11 +1554,15 @@ class App:
                     automatic, manifest, error = value
                     self.update_checking = False
                     if error:
-                        self.log.warning("检查更新失败：%s", error)
+                        self.log.warning("检查更新失败：%s", user_error(error, "网络连接失败"))
                         if not automatic:
                             self.status.set("检查更新失败")
                             self.detail.set("无法连接官网，请稍后重试。")
-                            messagebox.showwarning("检查更新失败", f"暂时无法读取版本信息：\n{error}", parent=self.root)
+                            messagebox.showwarning(
+                                "检查更新失败",
+                                f"暂时无法读取版本信息：\n{user_error(error, '网络连接失败，请稍后重试。')}",
+                                parent=self.root,
+                            )
                         continue
                     if manifest["version_tuple"] <= parse_version(APP_VERSION):
                         self.log.info("当前已是最新版本 v%s", APP_VERSION)
@@ -1590,12 +1598,12 @@ class App:
                     self.draw_keys()
                 elif kind == "done":
                     status, error = value
-                    self.log.info("播放结束：%s；错误=%s", status, error)
+                    self.log.info("播放结束：%s；错误=%s", status, user_error(error) if error else "")
                     self.current_note = None
                     self._set_busy(False)
                     self.status.set("已暂停，请检查提示" if error else "已暂停" if self.player.paused else status)
                     beginning = "首个片段" if self.segments else "曲首"
-                    self.detail.set(error or ("按 F8 从当前位置继续，或拖动进度定位。" if self.player.paused else f"按 F8 从{beginning}播放，或拖动进度选择位置。"))
+                    self.detail.set(user_error(error) if error else ("按 F8 从当前位置继续，或拖动进度定位。" if self.player.paused else f"按 F8 从{beginning}播放，或拖动进度选择位置。"))
                     self.draw_keys()
                     self._update_progress()
         except queue.Empty:
@@ -1687,7 +1695,7 @@ class App:
             target = dialog if dialog else self.root
             activate_window(window_info(root_window(target.winfo_id())))
         except RuntimeError as error:
-            self.detail.set(str(error))
+            self.detail.set(user_error(error, "无法切回主窗口，请稍后重试。"))
 
     def close(self, force=False):
         if self.closing:
@@ -1736,7 +1744,7 @@ def main():
         except OSError as error:
             notice = tk.Tk()
             notice.withdraw()
-            messagebox.showerror("需要管理员权限", str(error), parent=notice)
+            messagebox.showerror("需要管理员权限", user_error(error, "无法获取管理员权限，请稍后重试。"), parent=notice)
             notice.destroy()
         return
     try:
@@ -1879,7 +1887,7 @@ def main():
                 Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": True, "notes": len(app.plan.notes), "midi_tested": midi_tested, "jianpu_tested": jianpu_tested, "score_json_tested": score_json_tested, "online_downloaded": online_downloaded, "width": root.winfo_width(), "height": root.winfo_height(), "tray": True, "hide_restore": True, "editor": True, "aggregate_search": True, "jianpu_search": True}), encoding="utf-8")
             except Exception as error:
                 smoke_exit = 1
-                Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": False, "error": str(error)}), encoding="utf-8")
+                Path(args.data_dir, "smoke-result.json").write_text(json.dumps({"ok": False, "error": user_error(error)}), encoding="utf-8")
             finally:
                 app.close()
         root.after(1200, verify)

@@ -4,6 +4,8 @@ import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+from error_messages import user_error
+
 
 class AccountPanel:
     def __init__(self, app):
@@ -126,12 +128,14 @@ class AccountPanel:
             try:
                 result, error = action(), None
             except Exception as failure:
-                result, error = None, str(failure)
+                result, error = None, user_error(failure, "账号操作失败，请稍后重试")
             self.app.events.put(("account_result", (result, error, complete)))
         threading.Thread(target=worker, name="账号请求", daemon=True).start()
 
     def accept(self, value):
         result, error, complete = value
+        if error:
+            error = user_error(error, "账号操作失败，请稍后重试")
         self.running = False
         self.refresh_profile()
         if not self.dialog or not self.dialog.winfo_exists():

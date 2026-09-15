@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import tkinter as tk
 
+from error_messages import user_error
 from win_input import (activate_window, foreground, matching_windows, overlay_style,
                        root_window, target_matches, window_info)
 
@@ -63,7 +64,7 @@ class Overlay:
             temporary.write_text(json.dumps({"enabled": self.enabled, "alpha": self.alpha, "x": self.x, "y": self.y}, ensure_ascii=False, indent=2), encoding="utf-8")
             temporary.replace(self.config_path)
         except OSError as error:
-            self.app.log.warning("悬浮窗设置保存失败：%s", error)
+            self.app.log.warning("悬浮窗设置保存失败：%s", user_error(error))
 
     def _show(self):
         if not self.visible:
@@ -111,7 +112,7 @@ class Overlay:
         try:
             activate_window(window_info(self.hwnd))
         except RuntimeError as error:
-            self.app.detail.set(str(error))
+            self.app.detail.set(user_error(error, "无法激活悬浮窗，请稍后重试。"))
         self.draw()
         self.save()
 
@@ -136,8 +137,8 @@ class Overlay:
             self.window.geometry(f"{self.WIDTH}x{self.PANEL_HEIGHT}+{self.x}+{self.y}")
             overlay_style(self.hwnd, True)
             self.app.status.set("请先进入游戏")
-            self.app.detail.set(str(error))
-            self.app.log.warning("悬浮窗返回失败：%s", error)
+            self.app.detail.set(user_error(error, "未找到可用的游戏窗口，请先进入游戏后重试。"))
+            self.app.log.warning("悬浮窗返回失败：%s", user_error(error))
         self.draw()
 
     def toggle_edit(self):

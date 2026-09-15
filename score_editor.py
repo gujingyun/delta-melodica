@@ -9,6 +9,7 @@ from fractions import Fraction
 
 from account_client import atomic_json
 from cloud_score import from_song, to_song
+from error_messages import user_error
 from music import (DEMO_SCORES, compile_plan, parse_jianpu, parse_jianpu_space, select_jianpu_space,
                    song_to_jianpu, transpose_jianpu)
 from jianpu_editor import ScorePreview, replace_header, score_glyphs, score_metadata, transpose_source
@@ -306,7 +307,7 @@ class ScoreEditor:
         try:
             parse_jianpu_space(result, self.name.get(), mode=self.source_mode)
         except ValueError as error:
-            messagebox.showerror("无法应用", str(error), parent=self.dialog)
+            messagebox.showerror("无法应用", user_error(error), parent=self.dialog)
             return
         self.replace_range(0, len(text), result)
 
@@ -354,12 +355,13 @@ class ScoreEditor:
                             self.ready_status)
         except ValueError as error:
             self.summary.set("请检查简谱")
-            self.status.set(str(error))
+            safe_error = user_error(error)
+            self.status.set(safe_error)
             if self.is_source:
-                self.score_preview.show("", str(error))
+                self.score_preview.show("", safe_error)
                 self.text.tag_configure("error", background="#633c26")
                 self.text.tag_remove("error", "1.0", "end")
-                line = re.search(r"第 (\d+) 行", str(error))
+                line = re.search(r"第 (\d+) 行", safe_error)
                 if line:
                     self.text.tag_add("error", f"{line[1]}.0", f"{line[1]}.end")
 
@@ -378,7 +380,7 @@ class ScoreEditor:
             self.text.edit_separator()
             self.text.configure(autoseparators=True)
         except ValueError as error:
-            messagebox.showerror("无法移调", str(error), parent=self.dialog)
+            messagebox.showerror("无法移调", user_error(error), parent=self.dialog)
 
     def preview(self, selection=False):
         if self.player.active:
@@ -401,7 +403,7 @@ class ScoreEditor:
             self.preview_run_id = self.player.run_id
             self.status.set("正在试听" + ("选中片段" if selection else "全曲") + " · F9 停止")
         except (ValueError, RuntimeError) as error:
-            messagebox.showerror("无法试听", str(error), parent=self.dialog)
+            messagebox.showerror("无法试听", user_error(error), parent=self.dialog)
 
     def stop_preview(self):
         # F9 可从热键线程调用；这里不访问任何 Tk 控件。
@@ -435,7 +437,7 @@ class ScoreEditor:
                 run_id, kind, value = self.events.get_nowait()
                 if run_id == self.player.run_id and kind == "done":
                     status, error = value
-                    self.status.set(f"试听失败：{error}" if error else status)
+                    self.status.set(f"试听失败：{user_error(error)}" if error else status)
         except queue.Empty:
             pass
         self.update_playing_position()
@@ -458,7 +460,7 @@ class ScoreEditor:
             path = self.app.library_dir / f"{uuid.uuid4().hex}__{safe}.json"
             atomic_json(path, data)
         except (ValueError, OSError) as error:
-            messagebox.showerror("曲谱未保存", str(error), parent=self.dialog)
+            messagebox.showerror("曲谱未保存", user_error(error), parent=self.dialog)
             return
         self.saved_path = path
         self.close(force=True)
