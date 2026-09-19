@@ -39,7 +39,7 @@ public final class MainActivity extends Activity {
     private Score original, selected;
     private Spinner songs, tracks;
     private TextView serviceStatus, songInfo, targetInfo;
-    private Button permissionButton, updateButton;
+    private Button permissionButton, updateButton, switchSpeedButton;
     private boolean checkingUpdate;
     private final java.util.concurrent.ExecutorService updateWorker = java.util.concurrent.Executors.newSingleThreadExecutor();
     private LinearLayout content;
@@ -128,6 +128,8 @@ public final class MainActivity extends Activity {
         text(setup, "首次在系统设置中开启一次。日常停止、隐藏悬浮窗会保留授权。只有点击播放才演奏。", 12, Ui.MUTED);
         permissionButton = action(setup, "开启无障碍服务", this::requestService, false);
         LinearLayout mapping = card("音键与校准");
+        switchSpeedButton = action(mapping, "切调速度", this::switchSpeedDialog, false);
+        text(mapping, "快速模式减少停顿；如果出现漏切或错音，请切回稳定模式。实际间隔受手机和游戏影响。", 12, Ui.MUTED);
         action(mapping, "音键与变音设置", this::mappingDialog, false);
         action(mapping, "打开本地测试键盘", () -> { if (MelodicaService.instance != null) { prepare(); MelodicaService.instance.showPanel(); } startActivity(new Intent(this, TouchTestActivity.class)); }, false);
         text(mapping, "切出目标应用、锁屏或旋转会暂停。更换游戏键位或屏幕方向后，请重新校准。", 12, Ui.MUTED);
@@ -304,7 +306,17 @@ public final class MainActivity extends Activity {
         if (!state.contentEquals(serviceStatus.getText())) serviceStatus.setText(state);
         String label = enabled ? "管理无障碍授权" : "开启无障碍服务";
         if (!label.contentEquals(permissionButton.getText())) permissionButton.setText(label);
+        String switchLabel = settings.fastSwitch() ? "切调速度：快速（试用）" : "切调速度：稳定";
+        if (!switchLabel.contentEquals(switchSpeedButton.getText())) switchSpeedButton.setText(switchLabel);
         targetInfo.setText(!settings.calibrated() ? "需要重新校准：八个音键 + 四个变音按钮" : "已绑定：" + settings.target() + "\n12 点校准画面：" + settings.width() + " × " + settings.height());
+    }
+    private void switchSpeedDialog() {
+        new AlertDialog.Builder(this).setTitle("切调速度")
+            .setSingleChoiceItems(new String[]{"快速（试用，目标约 32 毫秒）", "稳定（兼容优先）"}, settings.fastSwitch() ? 0 : 1,
+                (dialog, which) -> {
+                    if (settings.fastSwitch() != (which == 0)) { settings.fastSwitch(which == 0); prepare(); updateStatus(); }
+                    dialog.dismiss();
+                }).setNegativeButton("取消", null).show();
     }
     private void mappingDialog() {
         LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(22), dp(12), dp(22), dp(12));

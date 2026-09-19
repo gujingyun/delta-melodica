@@ -34,7 +34,6 @@ import java.util.Locale;
 
 /** 无障碍悬浮控制与触摸后端，所有窗口和调度操作都在主线程。 */
 public final class MelodicaService extends AccessibilityService {
-    private static final long SELECTOR_TAP_MS = 45, SELECTOR_SETTLE_MS = 8;
     public static MelodicaService instance;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private Settings settings;
@@ -56,6 +55,8 @@ public final class MelodicaService extends AccessibilityService {
     private Calibration calibration;
     private Score score;
     private Score.Fingering[] fingerings;
+    private long[] releaseTimes;
+    private boolean fastSwitch;
     private Transport transport;
     private String message = "选择曲目后，进入游戏校准音键";
     private GestureDescription.StrokeDescription[] held;
@@ -351,8 +352,15 @@ public final class MelodicaService extends AccessibilityService {
     private boolean validateStart() {
         if (!ready()) { notifyUser("请进入目标窗口并完成 12 点校准；升级或旋转屏幕后需重新校准"); return false; }
         try {
+            fastSwitch = settings.fastSwitch();
             fingerings = new Score.Fingering[score.notes.size()];
             for (int i = 0; i < fingerings.length; i++) fingerings[i] = settings.fingering(score.notes.get(i).pitch);
+            releaseTimes = new long[fingerings.length];
+            for (int i = 0; i < releaseTimes.length; i++) {
+                boolean last = i + 1 == releaseTimes.length;
+                releaseTimes[i] = ToneTiming.releaseAt(score.notes.get(i), last ? null : score.notes.get(i + 1),
+                    fingerings[i], last ? null : fingerings[i + 1], transport.speed, fastSwitch);
+            }
             for (int point : Score.CALIBRATION_ORDER) {
                 PointF p = settings.point(point);
                 if (p == null) throw new IllegalArgumentException("请重新校准「" + Score.LABELS[point] + "」");
@@ -412,30 +420,20 @@ public final class MelodicaService extends AccessibilityService {
             // 必须先抬起音键，再依次点击音区和半音；这些按钮不能与音键一起长按。
             if (held != null) { release(); return; }
             int[] selectors = tones.steps(fingering);
-            GestureDescription.StrokeDescription[] taps = new GestureDescription.StrokeDescription[selectors.length];
-            for (int i = 0; i < selectors.length; i++) {
-                PointF p = settings.point(selectors[i]);
-                if (p == null || covers(p)) { pause("变音按钮被遮挡或校准已失效"); return; }
-                Path path = new Path(); path.moveTo(p.x, p.y);
-                // 保留 45 毫秒点击；两个按钮顺序抬起后再按下，不做同时多指点击。
-                taps[i] = new GestureDescription.StrokeDescription(path, i * (SELECTOR_TAP_MS + SELECTOR_SETTLE_MS), SELECTOR_TAP_MS);
-            }
-            transport.limitClock(now, n.start);
-            Transport batch = transport; long generation = batch.generation;
-            dispatch(taps, false, () -> {
-                if (transport == batch && batch.generation == generation && batch.active() && ready()) {
-                    for (int point : selectors) tones.applied(point);
-                }
-                else tones.invalidate();
-            }, SELECTOR_SETTLE_MS);
+            GestureDescription.StrokeDescription[] taps = selectorTaps(selectors, 0);
+            if (taps != null) dispatchToneBatch(taps, selectors, now, n.start);
             return;
         }
         transport.resumeClock(now);
         // 倒计时和休止时只预选变音，必须到谱面时刻才按下音键。
         if (transport.state == Transport.State.COUNTDOWN) { schedule(20); return; }
         if (position < n.start) { schedule(Math.min(15, Math.max(1, (long) Math.ceil((n.start - position) / transport.speed)))); return; }
-        long end = releaseAt(n), remaining = Math.max(1, (long) Math.ceil((end - position) / transport.speed));
+        long end = releaseTimes[index], remaining = Math.max(1, (long) Math.ceil((end - position) / transport.speed));
         long slice = Math.min(60, remaining); boolean more = remaining > slice;
+        int[] nextSelectors = !more && index + 1 < fingerings.length ? tones.steps(fingerings[index + 1]) : new int[0];
+        // 在最后一段音键手势里排入松键后的变音，省去松键回调到下一次派发的往返。
+        GestureDescription.StrokeDescription[] nextTaps = selectorTaps(nextSelectors, slice + ToneTiming.RELEASE_GAP_MS);
+        if (nextTaps == null) return;
         if (held == null) {
             int[] ids = {fingering.key};
             held = new GestureDescription.StrokeDescription[ids.length]; heldIndex = index;
@@ -450,7 +448,35 @@ public final class MelodicaService extends AccessibilityService {
         } else {
             for (int i = 0; i < held.length; i++) held[i] = held[i].continueStroke(holdPath(i, more), 0, slice, more);
         }
-        dispatch(held, more);
+        if (nextSelectors.length == 0) dispatch(held, more);
+        else {
+            GestureDescription.StrokeDescription[] batch = java.util.Arrays.copyOf(held, held.length + nextTaps.length);
+            System.arraycopy(nextTaps, 0, batch, held.length, nextTaps.length);
+            dispatchToneBatch(batch, nextSelectors, now, score.notes.get(index + 1).start);
+        }
+    }
+    private GestureDescription.StrokeDescription[] selectorTaps(int[] selectors, long start) {
+        GestureDescription.StrokeDescription[] taps = new GestureDescription.StrokeDescription[selectors.length];
+        if (selectors.length == 0) return taps;
+        long tap = ToneTiming.tapMs(selectors.length, fastSwitch), between = ToneTiming.betweenMs(fastSwitch);
+        for (int i = 0; i < selectors.length; i++) {
+            PointF p = settings.point(selectors[i]);
+            if (p == null || covers(p)) { pause("变音按钮被遮挡或校准已失效"); return null; }
+            Path path = new Path(); path.moveTo(p.x, p.y);
+            taps[i] = new GestureDescription.StrokeDescription(path,
+                start + i * (tap + between), tap);
+        }
+        return taps;
+    }
+    private void dispatchToneBatch(GestureDescription.StrokeDescription[] strokes, int[] selectors, long now, long nextStart) {
+        transport.limitClock(now, nextStart);
+        Transport batch = transport; long generation = batch.generation;
+        dispatch(strokes, false, () -> {
+            // 此处只提交同一播放批次的状态；下一次 pump 在任何触摸前统一检查前台。
+            if (transport == batch && batch.generation == generation && batch.active()) {
+                for (int point : selectors) tones.applied(point);
+            } else tones.invalidate();
+        }, ToneTiming.settleMs(fastSwitch));
     }
     private Path holdPath(int index, boolean move) {
         PointF start = endpoints[index], anchor = anchors[index];
@@ -462,11 +488,10 @@ public final class MelodicaService extends AccessibilityService {
         }
         return path;
     }
-    private long releaseAt(Score.Note n) { return ScoreTools.releaseAt(n); }
     private int findUpcomingNote(long position) {
         int low = 0, high = score.notes.size() - 1, found = -1;
         while (low <= high) { int mid = (low + high) >>> 1; if (score.notes.get(mid).start <= position) { found = mid; low = mid + 1; } else high = mid - 1; }
-        if (found < 0 || position >= releaseAt(score.notes.get(found))) found++;
+        if (found < 0 || position >= releaseTimes[found]) found++;
         return found < score.notes.size() ? found : -1;
     }
     private void release() {
@@ -491,7 +516,8 @@ public final class MelodicaService extends AccessibilityService {
                     if (!continued) { held = null; heldIndex = -1; }
                     if (completed != null) completed.run();
                     if (transport != null && transport.active()) schedule(settle); else release();
-                    render();
+                    // 演奏进度由心跳刷新，避免每个短手势都更新布局并触发窗口事件。
+                    if (transport == null || !transport.active()) render();
                 }
                 @Override public void onCancelled(GestureDescription gesture) {
                     if (destroyed || serial != gestureSerial) return;
