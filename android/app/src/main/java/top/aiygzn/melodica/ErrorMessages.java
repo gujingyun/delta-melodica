@@ -14,7 +14,7 @@ public final class ErrorMessages {
     private static final Pattern IPV6 = Pattern.compile("(?i)(?<![0-9a-f:])(?:[0-9a-f]{1,4}:){2,}[0-9a-f:]+(?![0-9a-f:])");
     private static final Pattern URL = Pattern.compile("(?i)https?://\\S+");
     private static final Pattern DOMAIN = Pattern.compile("(?i)(?<![a-z0-9-])(?:[a-z0-9-]+\\.)+[a-z]{2,}(?::\\d+)?(?![a-z0-9-])");
-    private static final Pattern PORT = Pattern.compile("(?i)\\b(?:port|端口)\\s*[:：]?\\s*\\d+");
+    private static final Pattern PORT = Pattern.compile("(?i)(?:\\bport|端口)\\s*[:：]?\\s*\\d+");
 
     private ErrorMessages() { }
 

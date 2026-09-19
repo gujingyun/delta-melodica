@@ -22,9 +22,11 @@ public final class AccountActivity extends Activity {
     private EditText email, password, code;
     private final List<android.view.View> controls = new ArrayList<>();
     private String mode = "login";
+    private String draftEmail = "";
     private boolean running;
     @Override public void onCreate(Bundle state) {
         super.onCreate(state); account = new Account(this);
+        if (state != null) { mode = state.getString("mode", "login"); draftEmail = state.getString("email", ""); }
         if (MelodicaService.instance != null) MelodicaService.instance.pause("打开账号面板");
         render();
     }
@@ -33,14 +35,15 @@ public final class AccountActivity extends Activity {
         TextView view = new TextView(this); view.setText(value); view.setTextSize(size); view.setTextColor(Color.WHITE); view.setPadding(0, dp(8), 0, dp(8)); content.addView(view); return view;
     }
     private Button button(String title, Runnable action) {
-        Button view = new Button(this); view.setText(title); view.setAllCaps(false); content.addView(view); view.setOnClickListener(v -> action.run()); controls.add(view); return view;
+        Button view = Ui.button(content, title, action, title.equals("登录") || title.equals("同步我的云端曲库") || title.equals("验证邮箱并注册")); controls.add(view); return view;
     }
     private EditText input(String hint, int type) {
         EditText view = new EditText(this); view.setHint(hint); view.setSingleLine(true); view.setInputType(type); content.addView(view); controls.add(view); return view;
     }
     private void render() {
+        if (email != null) draftEmail = email.getText().toString();
         controls.clear(); ScrollView scroll = new ScrollView(this); content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setPadding(dp(22), dp(20), dp(22), dp(24)); scroll.addView(content); setContentView(scroll);
-        text("账号与云端曲库", 26);
+        Ui.heading(content, "账号与云端曲库", "账号曲库与官网、Windows 共用");
         if (account.signedIn()) {
             text(account.email(), 18); text("邮箱已验证 · 本机账号曲库可离线演奏", 13);
             button("同步我的云端曲库", () -> run(account::sync, false));
@@ -55,6 +58,7 @@ public final class AccountActivity extends Activity {
                 tab.setEnabled(!mode.equals(item));
             }
             email = input("邮箱地址", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
+            email.setText(draftEmail);
             password = input(mode.equals("reset") ? "新密码（10～128 字符）" : "密码（10～128 字符）", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
             if (!mode.equals("login")) {
                 code = input("6 位邮箱验证码", InputType.TYPE_CLASS_NUMBER);
@@ -64,7 +68,7 @@ public final class AccountActivity extends Activity {
                 });
             }
             button(mode.equals("login") ? "登录" : mode.equals("register") ? "验证邮箱并注册" : "验证邮箱并重置密码", this::submit);
-            text("注册后，本机游客曲谱自动归入此账号并上传到私有云端。原文件保留为本机备份。", 13);
+            text("注册后，本机游客曲谱自动归入此账号并上传到私有云端。退出账号后仍可查看原游客曲谱；账号新增曲目单独保存。", 13);
         }
         button("权限与数据说明", () -> startActivity(new android.content.Intent(this, DataInfoActivity.class)));
         status = text("", 14); button("返回本地曲库", () -> {setResult(RESULT_OK); finish();});
@@ -89,7 +93,10 @@ public final class AccountActivity extends Activity {
         if (secret.length() < 10 || secret.length() > 128) {status.setText("密码需为 10～128 个字符"); return;}
         password.setText("");
         run(() -> {
-            if (selected.equals("reset")) return account.request("POST", "/auth/reset-password", new JSONObject().put("email", address).put("password", secret).put("code", verification)).getString("message");
+            if (selected.equals("reset")) {
+                String message = account.request("POST", "/auth/reset-password", new JSONObject().put("email", address).put("password", secret).put("code", verification)).getString("message");
+                runOnUiThread(() -> mode = "login"); return message + "，请使用新密码登录";
+            }
             account.authenticate(selected, address, secret, verification);
             if (selected.equals("register")) {account.claimGuest(); return account.sync();}
             return "已登录。可同步云端曲库；本机游客曲目可点击「合并本机游客曲库」加入账号。";
@@ -100,4 +107,5 @@ public final class AccountActivity extends Activity {
             .setPositiveButton("合并并同步", (d, w) -> run(() -> {account.claimGuest(); return account.sync();}, false)).setNegativeButton("取消", null).show();
     }
     @Override public void onBackPressed() {if (!running) {setResult(RESULT_OK); super.onBackPressed();} else status.setText("正在处理，请稍候；本机曲谱会保留。");}
+    @Override protected void onSaveInstanceState(Bundle out) { super.onSaveInstanceState(out); out.putString("mode", mode); out.putString("email", email == null ? draftEmail : email.getText().toString()); }
 }

@@ -113,7 +113,7 @@ public final class OnlineLibraryActivity extends Activity {
                     try { library.read(id); cached = true; }
                     catch (Exception ignored) { /* 缓存损坏时重新下载，验证成功后再替换。 */ }
                 }
-                if (!cached) id = library.saveOnline(song.id, OnlineLibrary.download(song));
+                if (!cached) id = OnlineLibrary.downloadTo(song, library);
                 OnlineLibrary.checkCancelled(); String selectedId = id;
                 runOnUiThread(() -> { if (current(token)) { setResult(RESULT_OK, new Intent().putExtra("songId", selectedId)); finish(); } });
             } catch (Exception error) { showFailure(token, "曲目下载失败，可重新点选重试", error); }

@@ -39,80 +39,117 @@ public final class MainActivity extends Activity {
     private Score original, selected;
     private Spinner songs, tracks;
     private TextView serviceStatus, songInfo, targetInfo;
-    private Button permissionButton;
+    private Button permissionButton, updateButton;
+    private boolean checkingUpdate;
+    private final java.util.concurrent.ExecutorService updateWorker = java.util.concurrent.Executors.newSingleThreadExecutor();
     private LinearLayout content;
     private boolean refreshing;
     private final android.os.Handler statusHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable refreshStatus = new Runnable() {
         @Override public void run() { if (!isDestroyed()) { updateStatus(); statusHandler.postDelayed(this, 700); } }
     };
-    @Override public void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState); settings = new top.aiygzn.melodica.Settings(this); library = new Library(this);
-        ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true);
-        content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL); content.setPadding(dp(22), dp(28), dp(22), dp(32));
-        scroll.addView(content); setContentView(scroll);
-        TextView eyebrow = text(content, "DELTA MELODICA  /  ANDROID", 11, 0xff66e3ac); eyebrow.setLetterSpacing(.12f);
-        TextView title = text(content, "三角洲口风琴", 30, Color.WHITE); title.setTypeface(null, Typeface.BOLD);
-        text(content, "把熟悉的旋律，带进手游。", 14, 0xffa7bebc);
-        action(content, "账号 / 云端同步", () -> startActivityForResult(new Intent(this, AccountActivity.class), 12), false);
-        LinearLayout setup = card("01  连接演奏服务");
-        serviceStatus = text(setup, "", 14, Color.WHITE);
-        text(setup, "首次需在系统设置中开启一次。平时停止、隐藏悬浮窗会保留授权，下次直接使用；只有点击播放后才演奏。", 12, 0xffa7bebc);
-        permissionButton = action(setup, "开启无障碍服务", this::requestService, false);
-        LinearLayout libraryCard = card("02  选择一首曲目");
-        songs = new Spinner(this); libraryCard.addView(songs);
-        songInfo = text(libraryCard, "", 13, 0xffa7bebc);
-        tracks = new Spinner(this); libraryCard.addView(tracks);
-        LinearLayout importRow = new LinearLayout(this); libraryCard.addView(importRow);
-        action(importRow, "导入 MIDI / 简谱", this::importFile, false);
-        action(importRow, "输入简谱", this::editScore, false);
-        action(libraryCard, "线上曲库", () -> startActivityForResult(new Intent(this, OnlineLibraryActivity.class), 11), false);
-        action(libraryCard, "搜简谱 / MIDI", () -> startActivityForResult(new Intent(this, ResourceSearchActivity.class), 13), false);
-        LinearLayout params = card("03  调整演奏");
-        text(params, "速度倍率", 12, 0xffa7bebc);
-        Spinner speeds = new Spinner(this); params.addView(speeds);
-        Float[] values = {.25f, .5f, .75f, 1f, 1.25f, 1.5f, 1.75f, 2f};
-        String[] speedLabels = new String[values.length]; int speedIndex = 3;
-        for (int i = 0; i < values.length; i++) { speedLabels[i] = String.format(Locale.ROOT, "%.2f 倍", values[i]); if (Math.abs(values[i] - settings.speed()) < .01) speedIndex = i; }
-        adapter(speeds, speedLabels); speeds.setSelection(speedIndex);
-        speeds.setOnItemSelectedListener(listener(i -> { settings.speed(values[i]); prepare(); }));
-        text(params, "移调（半音）", 12, 0xffa7bebc);
-        Spinner transposes = new Spinner(this); params.addView(transposes); String[] transposeLabels = new String[49];
-        for (int i = 0; i < 49; i++) transposeLabels[i] = (i >= 24 ? "+" : "") + (i - 24);
-        adapter(transposes, transposeLabels); transposes.setSelection(settings.transpose() + 24);
-        transposes.setOnItemSelectedListener(listener(i -> { settings.transpose(i - 24); prepare(); }));
-        action(params, "音键与变音设置", this::mappingDialog, false);
-        LinearLayout launch = card("04  进入游戏演奏");
-        targetInfo = text(launch, "", 12, 0xffa7bebc);
-        text(launch, "进入口风琴演奏画面 → 校准八个音键及半音、升调、自然音、降调 → 播放前确认半音是否选中。首次播放倒计时 3 秒。", 14, Color.WHITE);
-        action(launch, "显示悬浮控制条", () -> { if (service()) { prepare(); MelodicaService.instance.showPanel(); toast("已显示，请进入游戏演奏画面"); } }, true);
-        action(launch, "打开本地测试键盘", () -> { if (MelodicaService.instance != null) { prepare(); MelodicaService.instance.showPanel(); } startActivity(new Intent(this, TouchTestActivity.class)); }, false);
+
+    private android.widget.ViewFlipper pages;
+    private android.widget.ListView localSongs;
+    private EditText filter;
+    private Spinner speeds, transposes, styles;
+    private TextView selectedTitle, selectedDetail, segmentInfo, accountStatus;
+    private Button previewButton;
+    private PreviewPlayer previewPlayer;
+    private final List<Library.Entry> filtered = new ArrayList<>();
+    private final List<Button> tabs = new ArrayList<>();
+    private static final Float[] SPEEDS = {.25f, .5f, .75f, 1f, 1.25f, 1.5f, 1.75f, 2f};
+    @Override public void onCreate(Bundle saved) {
+        super.onCreate(saved); settings = new top.aiygzn.melodica.Settings(this); library = new Library(this);
+        LinearLayout root = Ui.root(this);
+        Ui.text(root, "DELTA MELODICA  /  " + BuildConfig.VERSION_NAME, 10, Ui.ACCENT).setLetterSpacing(.12f);
+        pages = new android.widget.ViewFlipper(this); root.addView(pages, new LinearLayout.LayoutParams(-1, 0, 1));
+        content = Ui.column(this); pages.addView(content);
+        Ui.heading(content, "我的曲库", "找到一首歌，编辑后带进手游。");
+        LinearLayout imports = Ui.row(content);
+        action(imports, "搜简谱 / MIDI", () -> startActivityForResult(new Intent(this, SearchActivity.class), 11), true);
+        action(imports, "导入文件", this::importFile, false);
+        LinearLayout sources = Ui.row(content);
+        action(sources, "输入简谱", this::editScore, false);
+        action(sources, "官网精选", () -> startActivityForResult(new Intent(this, OnlineLibraryActivity.class), 11), false);
+        filter = Ui.input(content, "搜索本地曲名", "", InputType.TYPE_CLASS_TEXT); filter.setSingleLine(true);
+        localSongs = new android.widget.ListView(this); localSongs.setDividerHeight(dp(6));
+        content.addView(localSongs, new LinearLayout.LayoutParams(-1, 0, 1));
+        localSongs.setOnItemClickListener((parent, view, position, id) -> {
+            Library.Entry entry = filtered.get(position); int index = entries.indexOf(entry); songs.setSelection(index); selectSong(index);
+        });
+        Ui.watch(filter, this::renderLocal);
+        LinearLayout chosen = card("当前曲目");
+        selectedTitle = text(chosen, "小星星", 18, Ui.TEXT); selectedTitle.setMaxLines(2); selectedTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        selectedDetail = text(chosen, "", 12, Ui.MUTED);
+        LinearLayout songActions = Ui.row(chosen);
+        action(songActions, "编辑", this::editSelected, false);
+        previewButton = action(songActions, "试听", this::previewSong, false);
+        action(songActions, "去演奏", () -> showPage(1), true);
+        if (getResources().getConfiguration().orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
+            content.removeView(chosen); pages.removeView(content); LinearLayout landscape = new LinearLayout(this);
+            landscape.addView(content, new LinearLayout.LayoutParams(0, -1, 1.4f));
+            LinearLayout.LayoutParams detail = new LinearLayout.LayoutParams(0, -2, 1); detail.setMarginStart(dp(12)); landscape.addView(chosen, detail); pages.addView(landscape);
+        }
+        previewPlayer = new PreviewPlayer(this, (position, playing, error) -> {
+            previewButton.setText(playing ? "停止试听" : "试听");
+            if (!error.isEmpty()) toast(ErrorMessages.redact(error));
+            else if (playing && selected != null) selectedDetail.setText("本机试听 " + MelodicaService.time(position) + " / " + MelodicaService.time(selected.duration));
+            else describe();
+        });
+        content = scrollPage(); Ui.heading(content, "演奏", "每首曲目的设置会自动记住。");
+        LinearLayout songCard = card("选择与整理");
+        songs = new Spinner(this); songCard.addView(songs); songInfo = text(songCard, "", 12, Ui.MUTED);
+        text(songCard, "旋律音轨", 12, Ui.MUTED); tracks = new Spinner(this); songCard.addView(tracks);
+        text(songCard, "演奏方式", 12, Ui.MUTED); styles = new Spinner(this); songCard.addView(styles);
+        adapter(styles, new String[]{"原谱 · 分音", "钢琴适配 · 连奏"});
+        styles.setOnItemSelectedListener(listener(i -> { if (!refreshing && settings.piano(defaultPiano()) != (i == 1)) { settings.setPiano(i == 1); applySong(); } }));
+        LinearLayout params = card("速度与移调");
+        text(params, "速度倍率", 12, Ui.MUTED); speeds = new Spinner(this); params.addView(speeds);
+        String[] speedLabels = new String[SPEEDS.length]; for (int i = 0; i < SPEEDS.length; i++) speedLabels[i] = String.format(Locale.ROOT, "%.2f 倍", SPEEDS[i]); adapter(speeds, speedLabels);
+        speeds.setOnItemSelectedListener(listener(i -> { if (!refreshing && Math.abs(settings.speed() - SPEEDS[i]) > .001) { settings.speed(SPEEDS[i]); prepare(); describe(); } }));
+        text(params, "移调（半音）", 12, Ui.MUTED); transposes = new Spinner(this); params.addView(transposes);
+        String[] transposeLabels = new String[49]; for (int i = 0; i < 49; i++) transposeLabels[i] = (i >= 24 ? "+" : "") + (i - 24); adapter(transposes, transposeLabels);
+        transposes.setOnItemSelectedListener(listener(i -> { if (!refreshing && settings.transpose() != i - 24) { settings.transpose(i - 24); prepare(); describe(); } }));
+        segmentInfo = text(params, "", 12, Ui.MUTED);
+        action(params, "片段编排", () -> { if (original != null) new SegmentDialog(this, settings, original, this::applySong).show(); }, false);
+        LinearLayout launch = card("进入游戏");
+        targetInfo = text(launch, "", 12, Ui.MUTED);
+        text(launch, "进入口风琴画面 → 校准 12 个按钮 → 将半音设为未选中 → 播放。提示 3 秒后自动演奏。", 13, Ui.TEXT);
+        action(launch, "显示悬浮控制条", () -> { if (selected != null && service()) { prepare(); MelodicaService.instance.showPanel(); toast("已显示，请进入游戏演奏画面"); } }, true);
         action(launch, "停止并隐藏悬浮窗", () -> {
             if (MelodicaService.instance != null) { MelodicaService.instance.stop(); MelodicaService.instance.hidePanel(); }
-            updateStatus(); toast(serviceEnabled() ? "已停止并隐藏，保留无障碍授权" : "已停止并隐藏悬浮窗");
+            updateStatus(); toast("已停止并隐藏，保留已有无障碍授权");
         }, false);
+        content = scrollPage(); Ui.heading(content, "设置", "连接演奏服务，管理账号与本机校准。");
+        LinearLayout accountCard = card("账号与云端曲库"); accountStatus = text(accountCard, "", 14, Ui.TEXT);
+        action(accountCard, "账号 / 云端同步", () -> startActivityForResult(new Intent(this, AccountActivity.class), 12), false);
+        LinearLayout setup = card("演奏服务"); serviceStatus = text(setup, "", 14, Ui.TEXT);
+        text(setup, "首次在系统设置中开启一次。日常停止、隐藏悬浮窗会保留授权。只有点击播放才演奏。", 12, Ui.MUTED);
+        permissionButton = action(setup, "开启无障碍服务", this::requestService, false);
+        LinearLayout mapping = card("音键与校准");
+        action(mapping, "音键与变音设置", this::mappingDialog, false);
+        action(mapping, "打开本地测试键盘", () -> { if (MelodicaService.instance != null) { prepare(); MelodicaService.instance.showPanel(); } startActivity(new Intent(this, TouchTestActivity.class)); }, false);
+        text(mapping, "切出目标应用、锁屏或旋转会暂停。更换游戏键位或屏幕方向后，请重新校准。", 12, Ui.MUTED);
         action(content, "权限与数据说明", () -> startActivity(new Intent(this, DataInfoActivity.class)), false);
-        text(content, "v" + BuildConfig.VERSION_NAME + "  ·  Android 8.0+\n支持官网 MIDI / JSON 曲谱及账号云同步。日常停止保留无障碍授权；演奏期间禁用收起。", 11, 0xff789795);
-        songs.setOnItemSelectedListener(listener(this::selectSong));
-        refreshLibrary(); updateStatus();
+        updateButton = action(content, "检查更新", this::checkUpdate, false);
+        text(content, "v" + BuildConfig.VERSION_NAME + " · Android 8.0+\n手机合成音仅供旋律和节奏试听，游戏音色以实际演奏为准。", 12, Ui.MUTED);
+        LinearLayout navigation = Ui.row(root); String[] names = {"曲库", "演奏", "设置"};
+        for (int i = 0; i < names.length; i++) { final int index = i; tabs.add(action(navigation, names[i], () -> showPage(index), false)); }
+        songs.setOnItemSelectedListener(listener(this::selectSong)); refreshLibrary(); updateStatus(); showPage(saved == null ? 0 : saved.getInt("page", 0));
     }
-    private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }
-    private TextView text(LinearLayout parent, String value, int size, int color) {
-        TextView view = new TextView(this); view.setText(value); view.setTextSize(size); view.setTextColor(color); view.setPadding(0, dp(5), 0, dp(6)); view.setLineSpacing(dp(2), 1); parent.addView(view); return view;
+    private LinearLayout scrollPage() {
+        ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true); LinearLayout box = Ui.column(this); box.setPadding(0, 0, 0, dp(16)); scroll.addView(box); pages.addView(scroll); return box;
     }
-    private LinearLayout card(String title) {
-        LinearLayout card = new LinearLayout(this); card.setOrientation(LinearLayout.VERTICAL); card.setPadding(dp(16), dp(12), dp(16), dp(14));
-        GradientDrawable background = new GradientDrawable(); background.setColor(0xff172729); background.setCornerRadius(dp(18)); card.setBackground(background);
-        LinearLayout.LayoutParams layout = new LinearLayout.LayoutParams(-1, -2); layout.topMargin = dp(18); content.addView(card, layout);
-        TextView label = text(card, title, 12, 0xff66e3ac); label.setTypeface(null, Typeface.BOLD); return card;
+    private void showPage(int index) {
+        pages.setDisplayedChild(index);
+        for (int i = 0; i < tabs.size(); i++) { tabs.get(i).setTextColor(i == index ? Ui.BG : Ui.MUTED); tabs.get(i).setBackground(Ui.background(this, i == index ? Ui.ACCENT : Ui.BG, 10)); }
+        ((android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(pages.getWindowToken(), 0);
     }
-    private Button action(LinearLayout parent, String label, Runnable click, boolean primary) {
-        Button button = new Button(this); button.setText(label); button.setTextSize(14); button.setAllCaps(false); button.setMinWidth(0); button.setMinimumWidth(0);
-        button.setTextColor(primary ? 0xff0d1719 : 0xffd5e9e5);
-        GradientDrawable bg = new GradientDrawable(); bg.setColor(primary ? 0xff66e3ac : 0xff263c3e); bg.setCornerRadius(dp(10)); button.setBackground(bg);
-        LinearLayout.LayoutParams layout = parent.getOrientation() == LinearLayout.HORIZONTAL ? new LinearLayout.LayoutParams(0, dp(48), 1) : new LinearLayout.LayoutParams(-1, dp(48));
-        layout.topMargin = dp(10); layout.rightMargin = dp(4); parent.addView(button, layout); button.setOnClickListener(v -> click.run()); return button;
-    }
+    private int dp(float value) { return Ui.dp(this, value); }
+    private TextView text(LinearLayout parent, String value, int size, int color) { return Ui.text(parent, value, size, color); }
+    private LinearLayout card(String title) { return Ui.card(content, title); }
+    private Button action(LinearLayout parent, String label, Runnable click, boolean primary) { return Ui.button(parent, label, click, primary); }
     private interface Select { void run(int index); }
     private AdapterView.OnItemSelectedListener listener(Select select) {
         return new AdapterView.OnItemSelectedListener() {
@@ -123,26 +160,67 @@ public final class MainActivity extends Activity {
     private <T> void adapter(Spinner spinner, T[] labels) {
         ArrayAdapter<T> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, labels); adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinner.setAdapter(adapter);
     }
+
     private void refreshLibrary() {
-        entries = library.entries(); adapter(songs, entries.toArray(new Library.Entry[0])); int selectedIndex = 0;
-        for (int i = 0; i < entries.size(); i++) if (entries.get(i).id.equals(settings.selected())) selectedIndex = i;
-        songs.setSelection(selectedIndex); selectSong(selectedIndex);
+        entries = library.entries(); original = null; refreshing = true; adapter(songs, entries.toArray(new Library.Entry[0])); int index = 0;
+        for (int i = 0; i < entries.size(); i++) if (entries.get(i).id.equals(settings.selected())) index = i;
+        songs.setSelection(index); refreshing = false; selectSong(index); renderLocal();
     }
+    private void renderLocal() {
+        if (entries == null || localSongs == null) return;
+        filtered.clear(); List<String> labels = new ArrayList<>();
+        for (Library.Entry entry : entries) if (ResourceSearch.matches(entry.title, filter.getText().toString())) {
+            filtered.add(entry); labels.add((entry.id.equals(settings.selected()) ? "●  " : "") + entry.title);
+        }
+        localSongs.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, labels) {
+            @Override public View getView(int position, View convert, android.view.ViewGroup parent) {
+                TextView view = (TextView) super.getView(position, convert, parent); view.setTextColor(filtered.get(position).id.equals(settings.selected()) ? Ui.ACCENT : Ui.TEXT);
+                view.setTextSize(15); view.setMinHeight(dp(56)); view.setBackground(Ui.background(MainActivity.this, Ui.CARD, 10)); return view;
+            }
+        });
+    }
+    private boolean defaultPiano() { return library.kind(settings.selected()).equals("MIDI"); }
     private void selectSong(int index) {
-        if (index < 0 || index >= entries.size()) return;
+        if (refreshing || entries == null || index < 0 || index >= entries.size()) return;
+        if (original != null && settings.selected().equals(entries.get(index).id)) return;
+        if (previewPlayer != null) previewPlayer.stop();
         try {
-            settings.selected(entries.get(index).id); original = library.read(entries.get(index).id);
+            settings.selected(entries.get(index).id); original = library.read(settings.selected());
             TreeSet<Integer> ids = new TreeSet<>(); for (Score.Note n : original.notes) ids.add(n.track);
-            List<Integer> trackIds = new ArrayList<>(); trackIds.add(original.recommendedTrack()); trackIds.add(-1); trackIds.addAll(ids);
-            List<String> labels = new ArrayList<>(); labels.add("自动旋律 · 音轨 " + (trackIds.get(0) + 1)); labels.add("全部音轨 · 高声部");
-            for (int id : ids) labels.add("音轨 " + (id + 1));
-            refreshing = true; tracks.setOnItemSelectedListener(null); adapter(tracks, labels.toArray(new String[0])); tracks.setSelection(0); refreshing = false;
-            tracks.setOnItemSelectedListener(listener(i -> { if (!refreshing) { selected = original.melody(trackIds.get(i)); prepare(); describe(); } }));
-            selected = original.melody(trackIds.get(0)); prepare(); describe();
-        } catch (Exception e) { toast("曲谱读取失败：" + ErrorMessages.userMessage(e, "请检查曲谱后重试")); }
+            List<Integer> trackIds = new ArrayList<>(); trackIds.add(-2); trackIds.add(-1); trackIds.addAll(ids);
+            List<String> labels = new ArrayList<>(); labels.add("自动旋律 · 音轨 " + (original.recommendedTrack() + 1)); labels.add("全部音轨 · 高声部"); for (int id : ids) labels.add("音轨 " + (id + 1));
+            refreshing = true; tracks.setOnItemSelectedListener(null); adapter(tracks, labels.toArray(new String[0]));
+            int track = trackIds.indexOf(settings.track()); if (track < 0) { track = 0; settings.track(-2); } tracks.setSelection(track);
+            int speed = 3; for (int i = 0; i < SPEEDS.length; i++) if (Math.abs(SPEEDS[i] - settings.speed()) < .001) speed = i; speeds.setSelection(speed);
+            transposes.setSelection(Math.max(0, Math.min(48, settings.transpose() + 24))); styles.setSelection(settings.piano(defaultPiano()) ? 1 : 0);
+            refreshing = false; tracks.setOnItemSelectedListener(listener(i -> { if (!refreshing && settings.track() != trackIds.get(i)) { settings.track(trackIds.get(i)); applySong(); } }));
+            applySong(); renderLocal();
+        } catch (Exception e) { refreshing = false; selected = null; toast("曲谱读取失败：" + ErrorMessages.userMessage(e, "请检查输入后重试")); }
     }
-    private void describe() { if (selected != null) songInfo.setText(selected.notes.size() + " 个旋律音  ·  原曲 " + MelodicaService.time(selected.duration)); }
-    private void prepare() { if (selected != null && MelodicaService.instance != null) MelodicaService.instance.load(selected); }
+    private void applySong() {
+        if (original == null) return;
+        try { selected = settings.prepare(original, defaultPiano()); prepare(); describe(); }
+        catch (Exception e) { selected = null; if (MelodicaService.instance != null) MelodicaService.instance.stop(); songInfo.setText("请修正设置：" + ErrorMessages.userMessage(e, "请检查输入后重试")); toast(ErrorMessages.userMessage(e, "请检查输入后重试")); }
+    }
+    private void describe() {
+        if (selected == null || selectedTitle == null) return;
+        String detail = selected.notes.size() + " 音 · " + MelodicaService.time(Math.round(selected.duration / settings.speed())) + " · " + String.format(Locale.ROOT, "%.2f", settings.speed()) + " 倍";
+        selectedTitle.setText(selected.title); selectedDetail.setText(detail); if (songInfo != null) songInfo.setText(detail);
+        if (segmentInfo != null) { try { int count = settings.segments().size(); segmentInfo.setText(count == 0 ? "演奏全曲 · 可设置片段" : "已编排 " + count + " 个片段 · 原曲 " + MelodicaService.time(original.duration)); } catch (Exception e) { segmentInfo.setText(ErrorMessages.userMessage(e, "请检查输入后重试")); } }
+    }
+    private void prepare() {
+        if (previewPlayer != null && previewPlayer.playing()) previewPlayer.stop();
+        if (selected != null && MelodicaService.instance != null) MelodicaService.instance.load(selected);
+    }
+    private void previewSong() {
+        if (previewPlayer.playing()) { previewPlayer.stop(); return; } if (selected == null) return;
+        if (MelodicaService.instance != null) MelodicaService.instance.pause("本机试听");
+        previewPlayer.play(selected, settings.speed(), settings.transpose(), settings.base());
+    }
+    private void editSelected() {
+        if (original == null) return;
+        startActivityForResult(new Intent(this, ScoreEditorActivity.class).putExtra("songId", settings.selected()).putExtra("track", settings.track()).putExtra("piano", settings.piano(defaultPiano())), 13);
+    }
     private boolean service() {
         if (MelodicaService.instance != null) return true;
         if (serviceEnabled()) toast("已授权，等待系统连接；若长时间未恢复，可进入「管理无障碍授权」检查服务状态");
@@ -169,10 +247,58 @@ public final class MainActivity extends Activity {
         catch (ActivityNotFoundException | SecurityException e) { toast("系统未提供跳转入口，请在手机设置的无障碍页面开启演奏服务"); }
     }
     private void toast(String text) { android.widget.Toast.makeText(this, text, android.widget.Toast.LENGTH_LONG).show(); }
-    @Override protected void onResume() { super.onResume(); if (settings != null) { updateStatus(); statusHandler.removeCallbacks(refreshStatus); statusHandler.postDelayed(refreshStatus, 700); } }
-    @Override protected void onPause() { statusHandler.removeCallbacks(refreshStatus); super.onPause(); }
+    private void checkUpdate() {
+        if (checkingUpdate) return;
+        checkingUpdate = true; updateButton.setEnabled(false); updateButton.setText("正在检查更新…");
+        updateWorker.execute(() -> {
+            try {
+                AppUpdate latest = AppUpdate.fetch();
+                runOnUiThread(() -> showUpdateResult(latest));
+            } catch (Exception error) {
+                String message = ErrorMessages.userMessage(error, "请检查网络后重试");
+                runOnUiThread(() -> showUpdateFailure(message));
+            }
+        });
+    }
+    private void showUpdateResult(AppUpdate latest) {
+        if (isFinishing() || isDestroyed()) return;
+        checkingUpdate = false; updateButton.setEnabled(true); updateButton.setText("检查更新");
+        if (latest.versionCode > BuildConfig.VERSION_CODE) {
+            String message = "当前版本：v" + BuildConfig.VERSION_NAME + "\n最新版本：v" + latest.version;
+            if (!latest.notes.isEmpty()) message += "\n\n更新内容：\n" + latest.notes;
+            new AlertDialog.Builder(this).setTitle("发现新版本").setMessage(message)
+                .setPositiveButton("下载更新", (dialog, which) -> openUrl(latest.fileUrl))
+                .setNegativeButton("稍后", null).show();
+        } else {
+            new AlertDialog.Builder(this).setTitle("已是最新版本")
+                .setMessage("当前版本：v" + BuildConfig.VERSION_NAME + "\n官网版本：v" + latest.version)
+                .setPositiveButton("知道了", null).show();
+        }
+    }
+    private void showUpdateFailure(String message) {
+        if (isFinishing() || isDestroyed()) return;
+        checkingUpdate = false; updateButton.setEnabled(true); updateButton.setText("检查更新");
+        new AlertDialog.Builder(this).setTitle("检查更新失败").setMessage(message)
+            .setPositiveButton("知道了", null).show();
+    }
+    private void openUrl(String url) {
+        try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url))); }
+        catch (Exception error) { toast("无法打开下载地址：" + ErrorMessages.userMessage(error, "请稍后重试")); }
+    }
+    @Override protected void onResume() {
+        super.onResume();
+        if (settings != null) {
+            Library.Entry shown = (Library.Entry) songs.getSelectedItem();
+            if (shown != null && !shown.id.equals(settings.selected())) refreshLibrary();
+            updateStatus(); statusHandler.removeCallbacks(refreshStatus); statusHandler.postDelayed(refreshStatus, 700);
+        }
+    }
+    @Override protected void onPause() { statusHandler.removeCallbacks(refreshStatus); if (previewPlayer != null) previewPlayer.stop(); super.onPause(); }
+    @Override protected void onDestroy() { updateWorker.shutdownNow(); if (previewPlayer != null) previewPlayer.close(); statusHandler.removeCallbacksAndMessages(null); super.onDestroy(); }
+    @Override protected void onSaveInstanceState(Bundle state) { super.onSaveInstanceState(state); state.putInt("page", pages.getDisplayedChild()); }
     private void updateStatus() {
         boolean enabled = serviceEnabled();
+        Account account = new Account(this); accountStatus.setText(account.signedIn() ? account.email() : "游客模式 · 本地曲库可离线使用");
         String state = MelodicaService.instance != null ? "●  演奏服务已连接 · 授权已保留"
             : enabled ? "◐  已授权，等待系统连接；无需重复申请" : "○  未授权，请先开启无障碍服务";
         if (!state.contentEquals(serviceStatus.getText())) serviceStatus.setText(state);
@@ -193,29 +319,18 @@ public final class MainActivity extends Activity {
             } catch (Exception e) { base.setError("中央音高需为 24～96"); }
         })); dialog.show();
     }
-    private void editScore() {
-        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(20), dp(8), dp(20), dp(8));
-        EditText title = new EditText(this); title.setHint("曲名"); title.setText("自定义简谱"); box.addView(title);
-        EditText bpm = new EditText(this); bpm.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL); bpm.setText("100"); bpm.setHint("BPM：20～300"); box.addView(bpm);
-        EditText notes = new EditText(this); notes.setMinLines(4); notes.setMaxLines(7); notes.setText(settings.editor()); notes.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE); box.addView(notes);
-        text(box, "空格分隔：1 2 3:2 0 +1 -5 #4\n0 为休止，:2 两拍，:1/2 半拍，+ / - 为八度。", 12, 0xffa7bebc);
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle("保存简谱").setView(box).setPositiveButton("保存到曲库", null).setNegativeButton("取消", null).create();
-        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-            try { Score score = Score.jianpu(notes.getText().toString(), Double.parseDouble(bpm.getText().toString()), title.getText().toString().trim().isEmpty() ? "自定义简谱" : title.getText().toString().trim());
-                settings.selected(library.save(score)); settings.editor(notes.getText().toString()); refreshLibrary(); dialog.dismiss();
-            } catch (Exception e) { notes.setError(ErrorMessages.userMessage(e, "简谱格式不正确")); }
-        })); dialog.show();
-    }
+    private void editScore() { startActivityForResult(new Intent(this, ScoreEditorActivity.class), 13); }
     private void importFile() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT); intent.addCategory(Intent.CATEGORY_OPENABLE); intent.setType("*/*"); startActivityForResult(intent, 10);
     }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
-        if (request == 12) {library = new Library(this); refreshLibrary(); return;}
+        if (request == 12) {settings = new top.aiygzn.melodica.Settings(this); library = new Library(this); refreshLibrary(); updateStatus(); return;}
         if ((request == 11 || request == 13) && result == RESULT_OK && data != null && data.getStringExtra("songId") != null) {
-            settings.selected(data.getStringExtra("songId")); refreshLibrary(); toast("已选用曲目，可离线演奏"); return;
+            settings.selected(data.getStringExtra("songId")); refreshLibrary(); toast("已加入并选用，可离线编辑和演奏"); return;
         }
         if (request != 10 || result != RESULT_OK || data == null || data.getData() == null) return;
+        final Library destination = library;
         Uri uri = data.getData(); toast("正在导入曲谱…");
         new Thread(() -> {
             try {
@@ -230,16 +345,9 @@ public final class MainActivity extends Activity {
                     while ((count = in.read(buffer)) != -1) { if (out.size() + count > 10 * 1024 * 1024) throw new IllegalArgumentException("文件不能超过 10 MB"); out.write(buffer, 0, count); }
                     bytes = out.toByteArray();
                 }
-                Score score;
-                if (bytes.length >= 4 && bytes[0] == 'M' && bytes[1] == 'T' && bytes[2] == 'h' && bytes[3] == 'd') score = MidiReader.read(bytes, title);
-                else {
-                    String text = new String(bytes, StandardCharsets.UTF_8).replace("\ufeff", "");
-                    if (text.trim().startsWith("{")) score = CloudScore.decode(new org.json.JSONObject(text));
-                    else {if (bytes.length > 512000) throw new IllegalArgumentException("文本简谱过大"); score = Score.jianpu(text, 100, title);}
-                }
-                String id = library.save(score);
-                runOnUiThread(() -> { settings.selected(id); if (!isDestroyed()) { refreshLibrary(); toast("已加入曲库"); } });
-            } catch (Exception e) { runOnUiThread(() -> { if (!isDestroyed()) toast("导入失败：" + ErrorMessages.userMessage(e, "请检查文件格式后重试")); }); }
+                String id = destination.importBytes(bytes, title);
+                runOnUiThread(() -> { if (!isDestroyed() && !isFinishing() && destination == library) { settings.selected(id); refreshLibrary(); toast("已加入曲库"); } });
+            } catch (Exception e) { runOnUiThread(() -> { if (!isDestroyed()) toast("导入失败：" + ErrorMessages.userMessage(e, "请检查输入后重试")); }); }
         }, "导入曲谱").start();
     }
 }
