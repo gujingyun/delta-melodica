@@ -21,10 +21,15 @@ public final class Score {
     public static final class Note {
         public final long start, end;
         public final int pitch, track;
+        public final boolean legato;
         public Note(long start, long end, int pitch, int track) {
+            this(start, end, pitch, track, false);
+        }
+        public Note(long start, long end, int pitch, int track, boolean legato) {
             if (start < 0 || end <= start || end > 1800000 || pitch < 0 || pitch > 127)
                 throw new IllegalArgumentException("音符时值或音高越界（最长 30 分钟）");
             this.start = start; this.end = end; this.pitch = pitch; this.track = track;
+            this.legato = legato;
         }
     }
     public final String title;

@@ -14,6 +14,13 @@ import java.nio.file.Files;
 import java.util.List;
 
 public class OnlineLibraryTest {
+    @Test public void officialJsonScoresArePlayableAndValidated() throws Exception {
+        byte[] bytes = CloudScore.encode(Score.jianpu("1 2 3", 120, "JSON 曲谱")).toString().getBytes(StandardCharsets.UTF_8);
+        OnlineLibrary.Song song = catalog(item("json", "JSON 曲谱").put("format", "score").put("url", "songs/test.json").put("sha256", OnlineLibrary.digest(bytes))).get(0);
+        assertEquals(3, OnlineLibrary.decode(song, bytes).notes.size());
+        assertThrows(Exception.class, () -> OnlineLibrary.decode(song, "<html>验证</html>".getBytes(StandardCharsets.UTF_8)));
+        assertThrows(Exception.class, () -> catalog(item("bad", "格式无效").put("format", "image")));
+    }
     @Rule public TemporaryFolder temporary = new TemporaryFolder();
     private JSONObject item(String id, String title) throws Exception {
         return new JSONObject().put("id", id).put("title", title).put("url", "songs/test.mid");
@@ -39,8 +46,13 @@ public class OnlineLibraryTest {
         assertThrows(Exception.class, () -> catalog(item("a", "甲").put("sha256", "invalid")));
         assertThrows(Exception.class, () -> OnlineLibrary.parseCatalog("<html>失败</html>".getBytes(StandardCharsets.UTF_8)));
         assertThrows(Exception.class, () -> OnlineLibrary.parseCatalog(new byte[OnlineLibrary.MAX_CATALOG_BYTES + 1]));
-        JSONObject[] many = new JSONObject[501]; for (int i = 0; i < many.length; i++) many[i] = item("s" + i, "曲目" + i);
+        JSONObject[] many = new JSONObject[5001]; for (int i = 0; i < many.length; i++) many[i] = item("s" + i, "曲目" + i);
         assertThrows(Exception.class, () -> catalog(many));
+    }
+    @Test public void supportsExpandedCatalogAndDetectsJsonFormat() throws Exception {
+        JSONObject[] items = new JSONObject[501]; for (int i = 0; i < items.length; i++) items[i] = item("s" + i, "曲目" + i);
+        assertEquals(501, catalog(items).size());
+        assertEquals("score", catalog(item("score", "谱文").put("url", "https://example.com/song.json")).get(0).format);
     }
     @Test public void rejectsNonHttpsAndCredentialUrls() {
         for (String url : new String[]{"http://example.com/a.mid", "file:///tmp/a.mid", "javascript:alert(1)", "https://user:password@example.com/a.mid", "https://example.com/a.mid#fragment", "https:///missing"})

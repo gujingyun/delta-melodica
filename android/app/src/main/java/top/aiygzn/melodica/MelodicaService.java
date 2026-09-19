@@ -27,6 +27,7 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 import java.util.Locale;
@@ -43,7 +44,14 @@ public final class MelodicaService extends AccessibilityService {
     private TextView title, status;
     private Button play, collapse, calibrate;
     private LinearLayout panelHeader, controls;
-    private boolean awaitingHalf, compactPanel, panelTouching;
+    private LinearLayout detailPanel, detailHeader, songList, detailControls;
+    private WindowManager.LayoutParams detailParams;
+    private TextView detailStatus;
+    private android.widget.SeekBar progress;
+    private boolean seeking;
+    private Button expand, detailPlay;
+    private boolean awaitingHalf, compactPanel, panelTouching, detailVisible, restoreDetail;
+    private String selectedSongId;
     private final ToneState tones = new ToneState();
     private Calibration calibration;
     private Score score;
@@ -69,13 +77,15 @@ public final class MelodicaService extends AccessibilityService {
         }
     };
     @Override protected void onServiceConnected() {
+        // 同一服务实例重新绑定时清理旧回调，只恢复待机，不能沿用退出标记或自动续播。
+        shutdown(); destroyed = false;
         instance = this; settings = new Settings(this); windows = (WindowManager) getSystemService(WINDOW_SERVICE);
-        try { Score stored = new Library(this).read(settings.selected()); load(stored.melody(stored.recommendedTrack())); }
+        try { selectedSongId = settings.selected(); Library library = new Library(this); Score stored = library.read(selectedSongId); load(settings.prepare(stored, library.kind(selectedSongId).equals("MIDI"))); }
         catch (Exception e) { load(Score.jianpu(Score.STAR, 100, "小星星")); }
         showPanel(); handler.post(heartbeat);
     }
     public void load(Score value) {
-        stop(); score = value; transport = new Transport(value.duration, settings.speed()); message = "已准备：" + value.title; render();
+        stop(); settings = new Settings(this); score = value; selectedSongId = settings.selected(); transport = new Transport(value.duration, settings.speed()); message = "已准备：" + value.title; render();
     }
     private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }
     private Point size() { Point point = new Point(); windows.getDefaultDisplay().getRealSize(point); return point; }
@@ -103,20 +113,24 @@ public final class MelodicaService extends AccessibilityService {
             && ( !settings.target().equals(getPackageName()) || TouchTestActivity.active );
     }
     public void showPanel() {
-        if (panel != null || destroyed) return;
-        compactPanel = false; panelTouching = false;
-        panel = new LinearLayout(this); panel.setOrientation(LinearLayout.VERTICAL); panel.setPadding(dp(6), dp(4), dp(6), dp(4)); panel.setGravity(Gravity.CENTER_VERTICAL);
+        if (destroyed) return;
+        if (panel == null) createPanel();
+        if (panel == null) return;
+        hideDetail(false);
+        panel.setVisibility(View.VISIBLE);
+        compactPanel = true; panelTouching = false;
+        render();
+    }
+    private void createPanel() {
+        panel = new LinearLayout(this); panel.setOrientation(LinearLayout.HORIZONTAL); panel.setPadding(dp(6), dp(4), dp(6), dp(4)); panel.setGravity(Gravity.CENTER_VERTICAL);
         GradientDrawable bg = new GradientDrawable(); bg.setColor(Color.rgb(20, 39, 41)); bg.setCornerRadius(dp(16)); bg.setStroke(dp(1), Color.rgb(76, 129, 114)); panel.setBackground(bg);
-        panelHeader = new LinearLayout(this); panelHeader.setOrientation(LinearLayout.VERTICAL); panelHeader.setGravity(Gravity.CENTER_VERTICAL); panelHeader.setMinimumHeight(dp(48)); panel.addView(panelHeader);
-        title = new TextView(this); title.setText("口风琴 · 拖动移动"); title.setTextSize(12); title.setTextColor(0xff66e3ac); title.setSingleLine(); title.setEllipsize(TextUtils.TruncateAt.END); panelHeader.addView(title);
-        status = new TextView(this); status.setTextSize(11); status.setTextColor(Color.WHITE); status.setMaxLines(2); status.setEllipsize(TextUtils.TruncateAt.END); panelHeader.addView(status);
+        panelHeader = new LinearLayout(this); panelHeader.setOrientation(LinearLayout.HORIZONTAL); panelHeader.setGravity(Gravity.CENTER_VERTICAL); panelHeader.setMinimumHeight(dp(48)); panel.addView(panelHeader);
+        status = new TextView(this); status.setTextSize(14); status.setTextColor(Color.WHITE); status.setGravity(Gravity.CENTER_VERTICAL); status.setSingleLine(); status.setEllipsize(TextUtils.TruncateAt.END); panelHeader.addView(status, new LinearLayout.LayoutParams(0, -2, 1));
         panelHeader.setContentDescription("拖动移动悬浮控制条");
         controls = new LinearLayout(this); panel.addView(controls);
         play = button(controls, "播放", this::toggle);
-        button(controls, "停止", this::stop);
-        calibrate = button(controls, "校准", this::startCalibration);
-        collapse = button(controls, "收起", () -> { if (canCollapse()) { stop(); hidePanel(); } });
-        panelParams = new WindowManager.LayoutParams(panelWidth(false), WindowManager.LayoutParams.WRAP_CONTENT,
+        expand = button(controls, "展开", this::openDetail);
+        panelParams = new WindowManager.LayoutParams(panelWidth(), WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT);
         panelParams.gravity = Gravity.TOP | Gravity.LEFT; panelParams.x = dp(12); panelParams.y = dp(24);
         panelHeader.setOnTouchListener(new View.OnTouchListener() {
@@ -135,18 +149,115 @@ public final class MelodicaService extends AccessibilityService {
                 return true;
             }
         });
-        // 展开、字体变化和旋转后按实际尺寸收回屏幕内，保留所有操作入口。
+        // 字体变化和旋转后按实际尺寸收回屏幕内，保留播放时间和按钮。
         panel.addOnLayoutChangeListener((v, l, t, r, b, oldL, oldT, oldR, oldB) -> {
             if (panel != null && constrainPanel()) windows.updateViewLayout(panel, panelParams);
         });
-        try { windows.addView(panel, panelParams); } catch (RuntimeException e) { panel = null; notifyUser("悬浮窗创建失败：" + ErrorMessages.userMessage(e, "请检查悬浮窗权限")); }
-        render();
+        try { windows.addView(panel, panelParams); }
+        catch (RuntimeException e) { panel = null; notifyUser("悬浮窗创建失败：" + ErrorMessages.userMessage(e, "请检查悬浮窗权限")); }
     }
     private Button button(LinearLayout row, String text, Runnable click) {
         Button button = new Button(this); button.setText(text); button.setTextSize(12); button.setMinWidth(0); button.setMinimumWidth(0); button.setPadding(0, 0, 0, 0);
         button.setSingleLine(); button.setMinHeight(dp(48)); button.setMinimumHeight(dp(48));
         row.addView(button, new LinearLayout.LayoutParams(0, -2, 1)); button.setOnClickListener(v -> click.run());
         button.setOnTouchListener((v, event) -> { trackPanelTouch(event); return false; }); return button;
+    }
+    private Button detailButton(LinearLayout row, String text, Runnable click) {
+        Button button = new Button(this); button.setText(text); button.setTextSize(12); button.setMinWidth(0); button.setMinimumWidth(0); button.setPadding(0, 0, 0, 0);
+        button.setSingleLine(); button.setMinHeight(dp(48)); button.setMinimumHeight(dp(48)); button.setAllCaps(false);
+        row.addView(button, new LinearLayout.LayoutParams(0, -2, 1)); button.setOnClickListener(v -> click.run()); return button;
+    }
+    private void openDetail() {
+        if (destroyed || transport == null || transport.active() || !canCollapse()) return;
+        if (detailPanel == null) createDetailPanel();
+        if (detailPanel == null) return;
+        if (panel != null) panel.setVisibility(View.GONE);
+        detailVisible = true; compactPanel = false; detailPanel.setVisibility(View.VISIBLE); refreshSongList(); render();
+    }
+    private void hideDetail(boolean restorePanel) {
+        detailVisible = false;
+        if (detailPanel != null) detailPanel.setVisibility(View.GONE);
+        if (restorePanel && panel != null) { panel.setVisibility(View.VISIBLE); compactPanel = true; }
+    }
+    private void createDetailPanel() {
+        detailPanel = new LinearLayout(this); detailPanel.setOrientation(LinearLayout.VERTICAL); detailPanel.setPadding(dp(10), dp(8), dp(10), dp(8));
+        GradientDrawable bg = new GradientDrawable(); bg.setColor(Color.rgb(20, 39, 41)); bg.setCornerRadius(dp(18)); bg.setStroke(dp(1), Color.rgb(76, 129, 114)); detailPanel.setBackground(bg);
+        detailHeader = new LinearLayout(this); detailHeader.setOrientation(LinearLayout.VERTICAL); detailHeader.setGravity(Gravity.CENTER_VERTICAL); detailHeader.setMinimumHeight(dp(54)); detailPanel.addView(detailHeader);
+        title = new TextView(this); title.setText("歌曲列表"); title.setTextSize(16); title.setTextColor(0xff66e3ac); title.setSingleLine(); title.setEllipsize(TextUtils.TruncateAt.END); detailHeader.addView(title);
+        detailStatus = new TextView(this); detailStatus.setTextSize(11); detailStatus.setTextColor(Color.WHITE); detailStatus.setSingleLine(); detailStatus.setEllipsize(TextUtils.TruncateAt.END); detailHeader.addView(detailStatus);
+        detailHeader.setContentDescription("拖动移动歌曲列表悬浮窗");
+        progress = new android.widget.SeekBar(this); progress.setMax(1000); progress.setContentDescription("演奏进度，拖动后暂停并定位"); detailPanel.addView(progress);
+        progress.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(android.widget.SeekBar view, int value, boolean user) { }
+            @Override public void onStartTrackingTouch(android.widget.SeekBar view) { seeking = true; pause("正在定位，继续前请将半音设为未选中"); }
+            @Override public void onStopTrackingTouch(android.widget.SeekBar view) { if (transport != null) seek(Math.round(view.getProgress() / 1000.0 * transport.duration)); seeking = false; render(); }
+        });
+        ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true); scroll.setVerticalScrollBarEnabled(true);
+        songList = new LinearLayout(this); songList.setOrientation(LinearLayout.VERTICAL); scroll.addView(songList, new ScrollView.LayoutParams(-1, -2));
+        detailPanel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        detailControls = new LinearLayout(this); detailPanel.addView(detailControls);
+        detailPlay = detailButton(detailControls, "播放", this::toggle);
+        calibrate = detailButton(detailControls, "校准", this::startCalibration);
+        collapse = detailButton(detailControls, "收起", () -> { if (canCollapse()) hideDetail(true); });
+        detailParams = new WindowManager.LayoutParams(detailWidth(), detailHeight(), WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT);
+        detailParams.gravity = Gravity.TOP | Gravity.LEFT; detailParams.x = dp(8); detailParams.y = dp(24);
+        detailHeader.setOnTouchListener(new View.OnTouchListener() {
+            float x, y; int startX, startY;
+            @Override public boolean onTouch(View view, MotionEvent event) {
+                if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                    x = event.getRawX(); y = event.getRawY(); startX = detailParams.x; startY = detailParams.y; return true;
+                }
+                if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
+                    detailParams.x = startX + Math.round(event.getRawX() - x); detailParams.y = startY + Math.round(event.getRawY() - y);
+                    constrainDetail(); windows.updateViewLayout(detailPanel, detailParams); return true;
+                }
+                return true;
+            }
+        });
+        detailPanel.addOnLayoutChangeListener((v, l, t, r, b, oldL, oldT, oldR, oldB) -> {
+            if (detailPanel != null && constrainDetail()) windows.updateViewLayout(detailPanel, detailParams);
+        });
+        try { windows.addView(detailPanel, detailParams); detailPanel.setVisibility(View.GONE); }
+        catch (RuntimeException e) { detailPanel = null; notifyUser("曲库悬浮窗创建失败：" + ErrorMessages.userMessage(e, "请检查悬浮窗权限")); }
+    }
+    private int detailWidth() {
+        Point space = panelSpace(); int available = Math.max(dp(1), space.x - dp(16));
+        int preferred = Math.round(Math.min(space.x, space.y) * .84f);
+        return Math.min(available, Math.max(dp(240), preferred));
+    }
+    private int detailHeight() {
+        Point space = panelSpace(); int available = Math.max(dp(160), space.y - dp(24));
+        return Math.min(available, Math.max(dp(340), Math.round(space.y * .72f)));
+    }
+    private boolean constrainDetail() {
+        if (detailPanel == null || detailParams == null) return false;
+        Point space = panelSpace(); int x = detailParams.x, y = detailParams.y;
+        detailParams.x = Math.max(0, Math.min(Math.max(0, space.x - detailPanel.getWidth()), x));
+        detailParams.y = Math.max(0, Math.min(Math.max(0, space.y - detailPanel.getHeight()), y));
+        return x != detailParams.x || y != detailParams.y;
+    }
+    private void refreshSongList() {
+        if (songList == null) return;
+        songList.removeAllViews();
+        try {
+            for (Library.Entry entry : new Library(this).entries()) {
+                boolean selected = entry.id.equals(selectedSongId);
+                Button item = new Button(this); item.setText((selected ? "✓  " : "　　") + entry.title); item.setTextSize(13); item.setAllCaps(false);
+                item.setGravity(Gravity.CENTER_VERTICAL | Gravity.LEFT); item.setPadding(dp(10), 0, dp(10), 0); item.setMinHeight(dp(48)); item.setMinimumHeight(dp(48));
+                item.setTextColor(selected ? 0xff102829 : Color.WHITE);
+                GradientDrawable background = new GradientDrawable(); background.setColor(selected ? 0xff66e3ac : 0xff263c3e); background.setCornerRadius(dp(10)); item.setBackground(background);
+                LinearLayout.LayoutParams layout = new LinearLayout.LayoutParams(-1, dp(48)); layout.bottomMargin = dp(5); songList.addView(item, layout);
+                item.setOnClickListener(v -> selectSong(entry));
+            }
+        } catch (RuntimeException e) { notifyUser("曲库读取失败：" + ErrorMessages.userMessage(e, "请检查曲谱后重试")); }
+    }
+    private void selectSong(Library.Entry entry) {
+        if (transport != null && (transport.active() || !canCollapse())) return;
+        try {
+            Score stored = new Library(this).read(entry.id);
+            selectedSongId = entry.id; settings.selected(entry.id); load(settings.prepare(stored, new Library(this).kind(entry.id).equals("MIDI"))); refreshSongList();
+        } catch (Exception e) { notifyUser("曲谱读取失败：" + ErrorMessages.userMessage(e, "请检查曲谱后重试")); }
     }
     private void trackPanelTouch(MotionEvent event) {
         if (event.getActionMasked() == MotionEvent.ACTION_DOWN) panelTouching = true;
@@ -156,14 +267,15 @@ public final class MelodicaService extends AccessibilityService {
     }
     private Point panelSpace() { Point point = new Point(); windows.getDefaultDisplay().getSize(point); return point; }
     private int panelButtonWidth() { return Math.max(dp(48), (int) Math.ceil(play.getPaint().measureText("暂停")) + dp(16)); }
-    private int panelWidth(boolean compact) {
+    private int compactButtonCount() { return transport != null && transport.active() ? 1 : 2; }
+    private int panelWidth() {
         Point space = panelSpace();
-        // 以可用屏幕短边确定占比；文字与点击面积只作为下限，窗口本身不固定长宽。
-        int preferred = Math.round(Math.min(space.x, space.y) * (compact ? .5f : .62f));
-        int textWidth = (int) Math.ceil(Math.max(title.getPaint().measureText("准备 3 秒 · 拖动"), status.getPaint().measureText("00:00 / 30:00"))) + dp(4);
-        textWidth = Math.max(textWidth, (int) Math.ceil(status.getPaint().measureText("半音设为未选中")) + dp(4));
-        int required = compact ? textWidth + 2 * panelButtonWidth() : 4 * panelButtonWidth();
-        return Math.min(Math.max(preferred, required + panel.getPaddingLeft() + panel.getPaddingRight()), Math.max(1, space.x - dp(8)));
+        int preferred = Math.round(Math.min(space.x, space.y) * .30f);
+        String displayed = status.getText().toString();
+        if (displayed.isEmpty()) displayed = "00:00";
+        int textWidth = (int) Math.ceil(status.getPaint().measureText(displayed)) + dp(12);
+        int required = textWidth + compactButtonCount() * panelButtonWidth() + panel.getPaddingLeft() + panel.getPaddingRight();
+        return Math.min(Math.max(preferred, required), Math.max(1, space.x - dp(8)));
     }
     private boolean constrainPanel() {
         Point space = panelSpace(); int x = panelParams.x, y = panelParams.y;
@@ -171,15 +283,14 @@ public final class MelodicaService extends AccessibilityService {
         panelParams.y = Math.max(0, Math.min(Math.max(0, space.y - panel.getHeight()), y));
         return x != panelParams.x || y != panelParams.y;
     }
-    private void layoutPanel(boolean compact) {
-        if (compactPanel != compact) {
-            compactPanel = compact; panel.setOrientation(compact ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
-            panelHeader.setLayoutParams(new LinearLayout.LayoutParams(compact ? 0 : -1, -2, compact ? 1 : 0));
-            controls.setLayoutParams(new LinearLayout.LayoutParams(compact ? 2 * panelButtonWidth() : -1, -2));
-            calibrate.setVisibility(compact ? View.GONE : View.VISIBLE); collapse.setVisibility(compact ? View.GONE : View.VISIBLE);
-            status.setMaxLines(compact ? 1 : 2);
-        }
-        int width = panelWidth(compact);
+    private void layoutPanel() {
+        compactPanel = panel != null && panel.getVisibility() == View.VISIBLE;
+        panel.setOrientation(LinearLayout.HORIZONTAL);
+        panelHeader.setLayoutParams(new LinearLayout.LayoutParams(0, -2, 1));
+        controls.setLayoutParams(new LinearLayout.LayoutParams(compactButtonCount() * panelButtonWidth(), -2));
+        expand.setVisibility(transport != null && transport.active() ? View.GONE : View.VISIBLE);
+        status.setMaxLines(1);
+        int width = panelWidth();
         if (panelParams.width != width) { panelParams.width = width; windows.updateViewLayout(panel, panelParams); }
     }
     public void hidePanel() {
@@ -187,35 +298,39 @@ public final class MelodicaService extends AccessibilityService {
         dismissHalfPrompt();
         closeCalibration();
         if (panel != null) { windows.removeView(panel); panel = null; title = null; status = null; play = null; collapse = null; calibrate = null; panelHeader = null; controls = null; }
-        panelTouching = false;
+        if (detailPanel != null) { windows.removeView(detailPanel); detailPanel = null; detailHeader = null; detailStatus = null; detailPlay = null; detailControls = null; songList = null; }
+        progress = null; seeking = false; detailParams = null; detailVisible = false; compactPanel = false; expand = null; panelTouching = false;
     }
     private boolean canCollapse() {
         // 实际手指触碰可能先取消演奏手势；该次触碰仍不能把刚暂停的悬浮窗收起。
         return (transport == null || !transport.active()) && !inFlight && held == null && SystemClock.uptimeMillis() - cancelledAt >= 400;
     }
     private void render() {
-        if (status == null) return;
-        boolean enabled = canCollapse();
-        if (collapse.isEnabled() != enabled) { collapse.setEnabled(enabled); collapse.setAlpha(enabled ? 1f : .35f); }
-        // 手动触碰会先取消演奏手势，抬手和释放完成前保持按钮位置，防止点错或漏掉停止。
-        boolean compact = !enabled || (compactPanel && panelTouching);
-        layoutPanel(compact);
-        String detail = message;
-        String heading = compact ? "演奏中 · 拖动" : "口风琴 · 拖动移动";
-        if (transport != null && score != null) {
+        if (panel != null && status != null && panel.getVisibility() == View.VISIBLE && !detailVisible && calibration == null) {
             long now = SystemClock.uptimeMillis();
-            if (transport.state == Transport.State.COUNTDOWN) detail = "准备 " + ((transport.countdown(now) + 999) / 1000) + " 秒";
-            else if (transport.state == Transport.State.PLAYING) detail = "正在演奏";
-            String progress = time(transport.position(now)) + " / " + time(score.duration);
-            if (compact) {
-                heading = transport.state == Transport.State.COUNTDOWN ? detail + " · 拖动" : transport.active() ? "演奏中 · 拖动" : "已暂停 · 拖动";
-                detail = awaitingHalf ? "半音设为未选中" : progress;
-            } else detail = score.title + "  " + progress + "\n" + detail;
-            String label = transport.active() ? "暂停" : transport.state == Transport.State.PAUSED ? "继续" : "播放";
+            String progress = transport == null || score == null ? "00:00" : time(transport.position(now));
+            String value = awaitingHalf ? "半音设为未选中" : progress;
+            if (!value.contentEquals(status.getText())) status.setText(value);
+            String label = transport != null && transport.active() ? "暂停" : "播放";
             if (!label.contentEquals(play.getText())) play.setText(label);
+            layoutPanel();
         }
-        if (!heading.contentEquals(title.getText())) title.setText(heading);
-        if (!detail.contentEquals(status.getText())) status.setText(detail);
+        renderDetail();
+    }
+    private void renderDetail() {
+        if (detailPanel == null || detailStatus == null) return;
+        boolean enabled = canCollapse();
+        if (detailPlay != null) {
+            String label = transport != null && transport.active() ? "暂停" : "播放";
+            if (!label.contentEquals(detailPlay.getText())) detailPlay.setText(label);
+        }
+        if (calibrate != null) { calibrate.setEnabled(enabled); calibrate.setAlpha(enabled ? 1f : .35f); }
+        if (collapse != null) { collapse.setEnabled(enabled); collapse.setAlpha(enabled ? 1f : .35f); }
+        if (score != null && transport != null) {
+            if (progress != null && !seeking) progress.setProgress((int) (transport.position(SystemClock.uptimeMillis()) * 1000 / Math.max(1, score.duration)));
+            String value = "当前：" + score.title + "  " + time(transport.position(SystemClock.uptimeMillis())) + " / " + time(score.duration);
+            if (!value.contentEquals(detailStatus.getText())) detailStatus.setText(value);
+        }
     }
     static String time(long ms) { return String.format(Locale.ROOT, "%02d:%02d", ms / 60000, ms / 1000 % 60); }
     private void notifyUser(String text) { message = text; Toast.makeText(this, text, Toast.LENGTH_LONG).show(); render(); }
@@ -225,8 +340,10 @@ public final class MelodicaService extends AccessibilityService {
         // 手指点悬浮按钮时系统会先取消演奏手势，避免该次抬手又触发继续。
         if (transport.state == Transport.State.PAUSED && SystemClock.uptimeMillis() - cancelledAt < 400) return;
         if (inFlight || held != null) { notifyUser("正在释放触摸，请稍后重试"); return; }
+        // 详情窗点击播放先切换为紧凑条，再检查校准点是否被播放条遮挡。
+        showPanel();
         if (!validateStart()) return;
-        showPanel(); awaitingHalf = true; tones.invalidate();
+        awaitingHalf = true; tones.invalidate();
         // 播放和续播都给用户三秒关闭半音，提示期间不预选变音或发送音键。
         transport.play(SystemClock.uptimeMillis(), 3000);
         handler.postDelayed(halfPromptTask, 3000); render();
@@ -258,6 +375,11 @@ public final class MelodicaService extends AccessibilityService {
         if (panel == null || panel.getVisibility() != View.VISIBLE) return false;
         int[] location = new int[2]; panel.getLocationOnScreen(location);
         return p.x >= location[0] && p.x < location[0] + panel.getWidth() && p.y >= location[1] && p.y < location[1] + panel.getHeight();
+    }
+    public void seek(long position) {
+        pause("已定位，继续前请将半音设为未选中");
+        if (transport != null) transport.seek(position);
+        tones.invalidate(); render();
     }
     public void pause(String reason) {
         dismissHalfPrompt(); tones.invalidate();
@@ -340,7 +462,7 @@ public final class MelodicaService extends AccessibilityService {
         }
         return path;
     }
-    private long releaseAt(Score.Note n) { return n.end - Math.min(25, Math.max(1, (n.end - n.start) / 10)); }
+    private long releaseAt(Score.Note n) { return ScoreTools.releaseAt(n); }
     private int findUpcomingNote(long position) {
         int low = 0, high = score.notes.size() - 1, found = -1;
         while (low <= high) { int mid = (low + high) >>> 1; if (score.notes.get(mid).start <= position) { found = mid; low = mid + 1; } else high = mid - 1; }
@@ -398,15 +520,22 @@ public final class MelodicaService extends AccessibilityService {
             || target.equals("com.android.systemui") || target.contains("launcher") || target.equals("com.android.settings")) {
             notifyUser("先进入游戏演奏画面，再点悬浮窗的校准"); return;
         }
-        closeCalibration(); calibration = new Calibration(target);
+        boolean wasDetailVisible = detailVisible; closeCalibration(); restoreDetail = wasDetailVisible; calibration = new Calibration(target);
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(-1, -1, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN, PixelFormat.TRANSLUCENT);
         if (android.os.Build.VERSION.SDK_INT >= 28) params.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-        panel.setVisibility(View.GONE); windows.addView(calibration, params);
+        if (panel != null) panel.setVisibility(View.GONE);
+        if (detailPanel != null) detailPanel.setVisibility(View.GONE);
+        windows.addView(calibration, params);
     }
     private void closeCalibration() {
         if (calibration != null) { windows.removeView(calibration); calibration = null; }
-        if (panel != null) panel.setVisibility(View.VISIBLE);
+        if (restoreDetail && detailPanel != null) {
+            detailVisible = true; detailPanel.setVisibility(View.VISIBLE); if (panel != null) panel.setVisibility(View.GONE);
+        } else if (panel != null) {
+            detailVisible = false; panel.setVisibility(View.VISIBLE);
+        }
+        restoreDetail = false; render();
     }
     private final class Calibration extends View {
         final String target; final Point screen = size(); final int orientation = rotation();
@@ -461,6 +590,6 @@ public final class MelodicaService extends AccessibilityService {
     private void shutdown() {
         if (destroyed) return;
         destroyed = true; if (transport != null) transport.stop(); handler.removeCallbacksAndMessages(null);
-        gestureSerial++; inFlight = false; held = null; hidePanel(); if (instance == this) instance = null;
+        gestureSerial++; inFlight = false; held = null; heldIndex = -1; tones.invalidate(); hidePanel(); if (instance == this) instance = null;
     }
 }

@@ -24,7 +24,7 @@ public final class OnlineLibrary {
         public final String id, title, artist, description, url, sha256, format;
         public final long size;
         Song(String id, String title, String artist, String description, String url, long size, String sha256) {
-            this(id, title, artist, description, url, size, sha256, "midi");
+            this(id, title, artist, description, url, size, sha256, URI.create(url).getPath().toLowerCase(Locale.ROOT).endsWith(".json") ? "score" : "midi");
         }
         Song(String id, String title, String artist, String description, String url, long size, String sha256, String format) {
             this.id = id; this.title = title; this.artist = artist; this.description = description; this.url = url; this.size = size; this.sha256 = sha256;
@@ -36,7 +36,7 @@ public final class OnlineLibrary {
     public static List<Song> parseCatalog(byte[] bytes) throws Exception {
         if (bytes.length > MAX_CATALOG_BYTES) throw new IOException("线上目录超过 1 MB");
         JSONArray songs = new JSONObject(new String(bytes, StandardCharsets.UTF_8)).getJSONArray("songs");
-        if (songs.length() > 500) throw new IOException("线上目录最多支持 500 首曲目");
+        if (songs.length() > 5000) throw new IOException("线上目录最多支持 5000 首曲目");
         List<Song> result = new ArrayList<>(); Set<String> ids = new HashSet<>();
         for (int i = 0; i < songs.length(); i++) {
             JSONObject item = songs.getJSONObject(i);
@@ -44,7 +44,7 @@ public final class OnlineLibrary {
             if (!id.matches("[A-Za-z0-9][A-Za-z0-9._-]*") || !ids.add(id)) throw new IOException("目录曲目标识无效或重复");
             String title = text(item, "title", 100, true), artist = text(item, "artist", 100, false), description = text(item, "description", 300, false);
             String url = checkedUrl(URI.create(CATALOG_URL).resolve(text(item, "url", 500, true)).toString()).toString();
-            String format = item.isNull("format") ? "midi" : text(item, "format", 10, true);
+            String format = item.isNull("format") ? (URI.create(url).getPath().toLowerCase(Locale.ROOT).endsWith(".json") ? "score" : "midi") : text(item, "format", 10, true);
             if (!format.equals("midi") && !format.equals("score")) throw new IOException("目录曲谱格式不支持：" + format);
             long size = -1;
             if (!item.isNull("size")) {
@@ -74,11 +74,19 @@ public final class OnlineLibrary {
         return result;
     }
     public static Score download(Song song) throws Exception { return decode(song, fetch(song.url, MAX_SONG_BYTES)); }
+    public static String downloadTo(Song song, Library library) throws Exception {
+        return saveDownload(song, fetch(song.url, MAX_SONG_BYTES), library);
+    }
+    static String saveDownload(Song song, byte[] bytes, Library library) throws Exception {
+        decode(song, bytes);
+        return library.importBytes(bytes, song.title, library.onlineId(song.id), true);
+    }
     static Score decode(Song song, byte[] bytes) throws Exception {
         checkCancelled();
         if (bytes.length > MAX_SONG_BYTES || (song.size >= 0 && bytes.length != song.size)) throw new IOException("曲谱文件大小校验失败");
         if (!song.sha256.isEmpty() && !digest(bytes).equalsIgnoreCase(song.sha256)) throw new IOException("曲谱文件 SHA-256 校验失败");
         if (song.format.equals("score")) {
+            if (bytes.length > 2 * 1024 * 1024) throw new IOException("JSON 曲谱超过 2 MB");
             Score score = CloudScore.decode(new JSONObject(new String(bytes, StandardCharsets.UTF_8)));
             return new Score(song.title, score.notes, score.duration);
         }
@@ -113,7 +121,7 @@ public final class OnlineLibrary {
         }
         checkCancelled(); return out.toByteArray();
     }
-    private static byte[] fetch(String address, int maximum) throws IOException {
+    static byte[] fetch(String address, int maximum) throws IOException {
         URI url = checkedUrl(address); long deadline = System.nanoTime() + 30_000_000_000L;
         for (int redirect = 0; redirect <= 3; redirect++) {
             checkCancelled();
@@ -130,7 +138,15 @@ public final class OnlineLibrary {
                     catch (IllegalArgumentException e) { throw new IOException("服务器重定向无效", e); }
                     continue;
                 }
-                if (code != 200) throw new IOException("服务器返回 HTTP " + code);
+                if (code != 200) {
+                    String detail = "";
+                    try (InputStream input = connection.getErrorStream()) {
+                        if (input != null) detail = new String(readLimited(input, 32768, deadline), StandardCharsets.UTF_8);
+                    } catch (IOException ignored) { /* 错误页过大时仍保留 HTTP 状态。 */ }
+                    if ("challenge".equalsIgnoreCase(connection.getHeaderField("cf-mitigated")) || ResourceSearch.verification(detail))
+                        throw new IOException("需要浏览器人机验证，请在源站下载后导入");
+                    throw new IOException(code == 403 ? "网站拒绝后台访问（403），请打开源站查看" : code == 429 ? "网站请求过于频繁（429），请稍后重试" : "服务器返回 HTTP " + code);
+                }
                 if (connection.getContentLengthLong() > maximum) throw new IOException("下载文件超出大小限制");
                 try (InputStream input = connection.getInputStream()) { return readLimited(input, maximum, deadline); }
             } finally { connection.disconnect(); }

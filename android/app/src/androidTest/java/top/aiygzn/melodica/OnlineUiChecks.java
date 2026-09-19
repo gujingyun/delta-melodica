@@ -56,7 +56,7 @@ final class OnlineUiChecks {
             test.runOnMainSync(this::choose); clickDialog(cached ? "使用已下载曲目" : "下载并选用");
             await(() -> online.isFinishing() && new Settings(main).selected().equals(library.onlineId(chosen.id)), 35000, "下载后没有返回并选中本地曲目");
             check(library.read(library.onlineId(chosen.id)).title.equals(chosen.title), "下载曲目未保存");
-            check(((android.widget.Spinner) field(main, "songs")).getSelectedItem().toString().equals(chosen.title), "主界面没有选中线上曲目");
+            check(((Library.Entry) ((android.widget.Spinner) field(main, "songs")).getSelectedItem()).id.equals(library.onlineId(chosen.id)), "主界面没有选中线上曲目");
             long modified = downloaded.lastModified(); int files = library.entries().size();
             pass("取消下载、下载并选用、返回主界面并保存本地曲谱");
 
@@ -79,7 +79,7 @@ final class OnlineUiChecks {
     }
     private void open() {
         Instrumentation.ActivityMonitor monitor = test.addMonitor(OnlineLibraryActivity.class.getName(), null, false);
-        test.runOnMainSync(() -> find(main.getWindow().getDecorView(), "线上曲库").performClick());
+        test.runOnMainSync(() -> find(main.getWindow().getDecorView(), "官网精选").performClick());
         online = (OnlineLibraryActivity) test.waitForMonitorWithTimeout(monitor, 5000); test.removeMonitor(monitor);
         check(online != null, "线上曲库入口没有打开页面"); test.waitForIdleSync();
     }
