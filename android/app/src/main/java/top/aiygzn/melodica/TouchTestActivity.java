@@ -21,6 +21,7 @@ public final class TouchTestActivity extends Activity {
     private boolean half;
     private final List<Integer> pitches = new ArrayList<>(), selectors = new ArrayList<>();
     private final List<Long> noteDownTimes = new ArrayList<>(), noteUpTimes = new ArrayList<>();
+    private final List<Long> receivedDownTimes = new ArrayList<>(), receivedUpTimes = new ArrayList<>();
     private final Map<Integer, TextView> toneButtons = new HashMap<>();
     private final Map<Integer, Long> held = new HashMap<>();
     private TextView state;
@@ -37,6 +38,11 @@ public final class TouchTestActivity extends Activity {
         for (int id : new int[]{Score.HALF, Score.HIGH, Score.NATURAL, Score.LOW}) {
             TextView view = new TextView(this); view.setText(Score.LABELS[id]); view.setTextSize(20); view.setGravity(Gravity.CENTER);
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, -1, 1); params.setMargins(4, 4, 4, 12); modes.addView(view, params); toneButtons.put(id, view);
+            view.setOnTouchListener((v, event) -> {
+                // 在按下时检查互斥，不能只在点击完成时检查已松开的音键。
+                if (event.getActionMasked() == MotionEvent.ACTION_DOWN && !held.isEmpty()) selectorWhileHeld++;
+                return false;
+            });
             view.setOnClickListener(v -> {
                 if (!held.isEmpty()) selectorWhileHeld++;
                 selectors.add(id);
@@ -52,11 +58,13 @@ public final class TouchTestActivity extends Activity {
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, -1, 1); params.setMargins(4, 0, 4, 0); keyboard.addView(view, params);
             view.setOnTouchListener((v, event) -> {
                 if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                    receivedDownTimes.add(android.os.SystemClock.uptimeMillis());
                     downs++; held.put(key, event.getEventTime()); pitches.add(60 + Score.SCALE[key] + octave + (half ? 1 : 0));
                     noteDownTimes.add(event.getEventTime());
                     view.setBackgroundColor(0xff66e3ac); update("按下 " + Score.LABELS[key] + " · MIDI " + pitches.get(pitches.size() - 1));
                 }
                 if (event.getActionMasked() == MotionEvent.ACTION_UP || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                    if (event.getActionMasked() == MotionEvent.ACTION_UP) receivedUpTimes.add(android.os.SystemClock.uptimeMillis());
                     Long start = held.remove(key); if (event.getActionMasked() == MotionEvent.ACTION_UP) { ups++; noteUpTimes.add(event.getEventTime()); } else cancels++;
                     view.setBackgroundColor(0xffbdebd9); update("释放 " + Score.LABELS[key] + " · " + (start == null ? 0 : event.getEventTime() - start) + " ms");
                 }

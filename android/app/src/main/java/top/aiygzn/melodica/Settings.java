@@ -15,6 +15,8 @@ public final class Settings {
     private String songKey(String key) { return profile + "song:" + selected() + ":" + key; }
     public int base() { return prefs.getInt("base", 60); }
     public void base(int value) { prefs.edit().putInt("base", value).apply(); }
+    public boolean fastSwitch() { return prefs.getBoolean("fastSwitch", false); }
+    public void fastSwitch(boolean value) { prefs.edit().putBoolean("fastSwitch", value).apply(); }
     public int transpose() { return prefs.getInt(songKey("transpose"), profile.isEmpty() ? prefs.getInt("transpose", 0) : 0); }
     public void transpose(int value) { prefs.edit().putInt(songKey("transpose"), value).apply(); }
     public double speed() { return prefs.getFloat(songKey("speed"), profile.isEmpty() ? prefs.getFloat("speed", 1) : 1); }
