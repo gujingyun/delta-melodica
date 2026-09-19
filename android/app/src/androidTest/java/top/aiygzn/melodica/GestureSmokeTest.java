@@ -86,8 +86,19 @@ public final class GestureSmokeTest extends Instrumentation {
             else {
             runOnMainSync(() -> {
                 prefs.edit().remove("calibrationVersion").commit();
-                service.toggle();
+                service.showPanel();
+                find((View) field(service, "panel"), "播放").performClick();
+                check(((TextView) field(service, "status")).getText().toString().equals("请先校准"), "紧凑条未显示校准提示");
+                check(field(service, "message").toString().contains("请先进行校准"), "点击播放未提示先校准");
+                find((View) field(service, "panel"), "展开").performClick();
+                find((View) field(service, "detailPanel"), "播放").performClick();
+                check((Boolean) field(service, "detailVisible"), "未校准点击播放收起了校准入口");
+                check(((TextView) field(service, "detailStatus")).getText().toString().contains("请先校准：点击下方「校准」"), "详情窗未显示校准指引");
+                check(count("downs") == 0 && list("selectors").isEmpty(), "未校准点击播放发送了手势");
                 check(!settings.calibrated() && !transport().active() && !(Boolean) field(service, "awaitingHalf"), "旧校准被误用");
+            });
+            saveScreen("calibration-required-v072.png");
+            runOnMainSync(() -> {
                 service.showPanel(); find((View) field(service, "panel"), "展开").performClick();
                 find((View) field(service, "detailPanel"), "校准").performClick();
             });

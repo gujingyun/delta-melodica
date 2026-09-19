@@ -310,7 +310,7 @@ public final class MelodicaService extends AccessibilityService {
         if (panel != null && status != null && panel.getVisibility() == View.VISIBLE && !detailVisible && calibration == null) {
             long now = SystemClock.uptimeMillis();
             String progress = transport == null || score == null ? "00:00" : time(transport.position(now));
-            String value = awaitingHalf ? "半音设为未选中" : progress;
+            String value = !settings.calibrated() ? "请先校准" : awaitingHalf ? "半音设为未选中" : progress;
             if (!value.contentEquals(status.getText())) status.setText(value);
             String label = transport != null && transport.active() ? "暂停" : "播放";
             if (!label.contentEquals(play.getText())) play.setText(label);
@@ -329,15 +329,21 @@ public final class MelodicaService extends AccessibilityService {
         if (collapse != null) { collapse.setEnabled(enabled); collapse.setAlpha(enabled ? 1f : .35f); }
         if (score != null && transport != null) {
             if (progress != null && !seeking) progress.setProgress((int) (transport.position(SystemClock.uptimeMillis()) * 1000 / Math.max(1, score.duration)));
-            String value = "当前：" + score.title + "  " + time(transport.position(SystemClock.uptimeMillis())) + " / " + time(score.duration);
+            String value = !settings.calibrated() ? "请先校准：点击下方「校准」" : "当前：" + score.title + "  " + time(transport.position(SystemClock.uptimeMillis())) + " / " + time(score.duration);
             if (!value.contentEquals(detailStatus.getText())) detailStatus.setText(value);
         }
     }
     static String time(long ms) { return String.format(Locale.ROOT, "%02d:%02d", ms / 60000, ms / 1000 % 60); }
     private void notifyUser(String text) { message = text; Toast.makeText(this, text, Toast.LENGTH_LONG).show(); render(); }
     public void toggle() {
-        if (transport == null || calibration != null) return;
+        if (calibration != null) { notifyUser("请先完成当前的 12 点校准，再点击播放"); return; }
+        if (transport == null) { notifyUser("请先选择曲目，再点击播放"); return; }
         if (transport.active()) { pause("已暂停"); return; }
+        // 校准提示保留在当前悬浮窗，避免只弹短消息并把校准入口收起。
+        if (!settings.calibrated()) {
+            notifyUser("请先进行校准：进入游戏演奏画面，点击「展开 → 校准」，完成 12 点校准后再播放");
+            return;
+        }
         // 手指点悬浮按钮时系统会先取消演奏手势，避免该次抬手又触发继续。
         if (transport.state == Transport.State.PAUSED && SystemClock.uptimeMillis() - cancelledAt < 400) return;
         if (inFlight || held != null) { notifyUser("正在释放触摸，请稍后重试"); return; }
