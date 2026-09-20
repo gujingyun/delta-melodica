@@ -89,10 +89,9 @@ public final class Account {
             if (status >= 300 && status < 400) throw new IllegalArgumentException("账号服务发生重定向，请稍后重试");
             JSONObject response;
             try (InputStream input = status >= 400 ? connection.getErrorStream() : connection.getInputStream()) {
-                if (input == null) throw new IllegalArgumentException("账号服务暂时不可用");
-                response = new JSONObject(new String(OnlineLibrary.readLimited(input, 2 * 1024 * 1024, System.nanoTime() + 20_000_000_000L), StandardCharsets.UTF_8));
+                String bodyText = input == null ? "" : new String(OnlineLibrary.readLimited(input, 2 * 1024 * 1024, System.nanoTime() + 20_000_000_000L), StandardCharsets.UTF_8);
+                response = AccountResponse.parse(status, bodyText);
             }
-            if (status >= 400) throw new IllegalArgumentException(response.optString("detail", "账号请求失败，请稍后重试"));
             return response;
         } finally { connection.disconnect(); }
     }
