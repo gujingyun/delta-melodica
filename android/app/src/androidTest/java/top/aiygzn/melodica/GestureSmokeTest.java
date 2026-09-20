@@ -212,6 +212,8 @@ public final class GestureSmokeTest extends Instrumentation {
             tap(panelCenter("暂停"));
             await(() -> transport().state == Transport.State.PAUSED && held() == 0, 1000, "真实点击紧凑条暂停失败");
             runOnMainSync(() -> { check(find((View) field(service, "panel"), "播放").isShown(), "暂停后未显示播放按钮"); check(find((View) field(service, "panel"), "展开").isShown(), "暂停后未显示展开按钮"); });
+            // 真实触摸取消手势后有 400 毫秒防误触窗口，等待结束再验证展开。
+            await(() -> !(Boolean) field(service, "inFlight") && SystemClock.uptimeMillis() - (Long) field(service, "cancelledAt") >= 400, 1500, "暂停后防误触窗口未结束");
             runOnMainSync(() -> { find((View) field(service, "panel"), "展开").performClick(); check((Boolean) field(service, "detailVisible"), "无法打开歌曲详情悬浮窗"); check(field(service, "panel") != null && ((View) field(service, "panel")).getVisibility() == View.GONE, "展开后播放条未隐藏"); });
             runOnMainSync(() -> { checkDetailBounds(); checkDetailButtons("播放", "校准", "收起"); });
             runOnMainSync(() -> { find((View) field(service, "detailPanel"), "收起").performClick(); check(!(Boolean) field(service, "detailVisible"), "详情悬浮窗无法收起"); });
